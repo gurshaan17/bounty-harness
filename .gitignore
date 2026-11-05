@@ -85,3 +85,8 @@ venv/
 *.swo
 .gstack/
 workdir/
+
+# Local provider adapter ownership and recovery backups
+/tools/adapters/state.json
+/tools/adapters/backups/
+/.claude/settings.local.json

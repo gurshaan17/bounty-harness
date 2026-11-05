@@ -8,6 +8,7 @@ validate:
 	python3 tools/validate_skills.py
 
 test:
+	python3 -m unittest discover -s tests -v
 	@status=0; \
 	for skill in $$(ls .claude/skills/); do \
 		echo "--- Testing $$skill ---"; \

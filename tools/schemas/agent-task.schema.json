@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BountyHarness task 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "program_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "campaign_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "workflow": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "expected_context_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scope_digest": {
+      "type": "string",
+      "pattern": "[a-f0-9]{64}"
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "[a-f0-9]{64}"
+    },
+    "workflow_digest": {
+      "type": "string",
+      "pattern": "[a-f0-9]{64}"
+    },
+    "approval_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "idempotency_key",
+    "program_id",
+    "campaign_id",
+    "session_id",
+    "skill",
+    "workflow",
+    "inputs",
+    "expected_context_revision",
+    "scope_digest",
+    "policy_digest",
+    "workflow_digest"
+  ]
+}

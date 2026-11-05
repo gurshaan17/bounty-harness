@@ -36,6 +36,19 @@ workflows:
       if_no_findings: null
 
   search:
+    safety_tier: passive
+    auth_required: false
+    side_effects: []
+    offline_handler: standards-search-v1
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        QUERY:
+          type: string
+          minLength: 1
+          maxLength: 256
+      required: []
     description: Search across all catalogs by keyword.
     inputs: [OUTDIR]
     command: |

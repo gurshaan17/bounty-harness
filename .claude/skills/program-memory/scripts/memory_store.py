@@ -116,6 +116,10 @@ def record_fact(program, category, content, confidence="medium", source_artifact
         if violations:
             raise ValueError(f"Content contains possible secrets: {'; '.join(violations)}. Use --allow-secrets to override.")
 
+    if reviewed or allow_secrets:
+        raise ValueError('Secret and human-review overrides are unavailable')
+    if _check_secrets(json.dumps({'program': program, 'source': source_artifact, 'expires_at': expires_at})):
+        raise ValueError('Metadata contains possible secrets')
     fid = _fact_id()
     conn = _get_db(db_path)
     conn.execute("""
@@ -128,19 +132,24 @@ def record_fact(program, category, content, confidence="medium", source_artifact
     return {"status": "recorded", "fact_id": fid, "program": program, "category": category}
 
 
-def get_fact(fact_id, db_path=".bb/memory.sqlite"):
+def get_fact(fact_id, db_path=".bb/memory.sqlite", program=None):
     """Retrieve one fact by ID."""
+    if not program:
+        raise ValueError('Program binding is required')
     conn = _get_db(db_path)
-    row = conn.execute("SELECT * FROM facts WHERE fact_id = ?", (fact_id,)).fetchone()
+    row = conn.execute("SELECT * FROM facts WHERE fact_id = ? AND program = ?", (fact_id, program)).fetchone()
     conn.close()
     if row is None:
         return None
-    return dict(row)
+    result = dict(row)
+    return result if result['sensitivity'] != 'high-sensitivity' and not _check_secrets(json.dumps(result)) else None
 
 
 def search_facts(program, category=None, status="active", query=None,
                  db_path=".bb/memory.sqlite", cross_program=False):
     """Search facts for a program. Use cross_program=True to search all programs."""
+    if cross_program or not program:
+        raise ValueError('Cross-program retrieval is unavailable')
     conn = _get_db(db_path)
     clauses = []
     params = []
@@ -162,35 +171,36 @@ def search_facts(program, category=None, status="active", query=None,
     sql += " ORDER BY created_at DESC"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [dict(r) for r in rows if r['sensitivity'] != 'high-sensitivity' and not _check_secrets(json.dumps(dict(r)))]
 
 
 def record_correction(original_fact_id, new_content, reason, db_path=".bb/memory.sqlite",
-                      allow_secrets=False):
-    """Record a correction that supersedes an existing fact."""
-    original = get_fact(original_fact_id, db_path)
-    if original is None:
-        raise ValueError(f"Original fact '{original_fact_id}' not found")
-
-    if not allow_secrets:
-        violations = _check_secrets(new_content)
-        if violations:
-            raise ValueError(f"New content contains possible secrets: {'; '.join(violations)}. Use --allow-secrets to override.")
-
+                      allow_secrets=False, program=None, expected_revision=1):
+    """Legacy correction uses active-row CAS; migrated databases reject legacy writes."""
+    if not program or allow_secrets or type(expected_revision) is not int or expected_revision != 1:
+        raise ValueError('Program and valid expected revision required; overrides unavailable')
+    if not new_content.strip() or not reason.strip() or _check_secrets(new_content + '\n' + reason):
+        raise ValueError('Invalid correction or possible secrets')
     conn = _get_db(db_path)
-    conn.execute("UPDATE facts SET status = 'superseded' WHERE fact_id = ?", (original_fact_id,))
-
-    correction_content = f"CORRECTION (reason: {reason}): {new_content}"
-    fid = _fact_id()
-    conn.execute("""
-        INSERT INTO facts (fact_id, program, category, content, confidence, created_at,
-                           sensitivity, status, correction_of, reviewed_by_human)
-        VALUES (?, ?, 'correction', ?, ?, ?, 'program-private', 'active', ?, 0)
-    """, (fid, original["program"], correction_content, original.get("confidence", "medium"),
-          _now_iso(), original_fact_id))
-    conn.commit()
-    conn.close()
-    return {"status": "corrected", "fact_id": fid, "original_fact_id": original_fact_id, "program": original["program"]}
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        original = conn.execute('SELECT * FROM facts WHERE fact_id=? AND program=? AND status=?',
+                                (original_fact_id, program, 'active')).fetchone()
+        if original is None:
+            raise ValueError('Missing fact or stale revision')
+        conn.execute("UPDATE facts SET status='superseded' WHERE fact_id=? AND program=?", (original_fact_id, program))
+        fid = _fact_id()
+        conn.execute("""INSERT INTO facts (fact_id,program,category,content,confidence,created_at,sensitivity,status,correction_of,reviewed_by_human)
+                        VALUES(?,?,?,?,?,?,?,'active',?,0)""",
+                     (fid, program, 'correction', 'CORRECTION (reason: ' + reason + '): ' + new_content,
+                      original['confidence'], _now_iso(), original['sensitivity'], original_fact_id))
+        conn.commit()
+        return {'status': 'corrected', 'fact_id': fid, 'original_fact_id': original_fact_id, 'program': program}
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def decay_facts(program, db_path=".bb/memory.sqlite"):
@@ -208,79 +218,9 @@ def decay_facts(program, db_path=".bb/memory.sqlite"):
 
 
 def summarize_memory(program, db_path=".bb/memory.sqlite"):
-    """Produce a redacted summary suitable for planner context consumption."""
-    conn = _get_db(db_path)
-    total = conn.execute("SELECT COUNT(*) as c FROM facts WHERE program = ? AND status = 'active'", (program,)).fetchone()["c"]
-    stale = conn.execute("SELECT COUNT(*) as c FROM facts WHERE program = ? AND status = 'stale'", (program,)).fetchone()["c"]
-    superseded = conn.execute("SELECT COUNT(*) as c FROM facts WHERE program = ? AND status = 'superseded'", (program,)).fetchone()["c"]
-    categories = conn.execute("""
-        SELECT category, COUNT(*) as c FROM facts WHERE program = ? AND status = 'active' GROUP BY category ORDER BY c DESC
-    """, (program,)).fetchall()
-
-    lines = [f"# Program Memory: {program}\n"]
-    lines.append(f"- **Active facts**: {total}")
-    lines.append(f"- **Stale facts**: {stale}")
-    lines.append(f"- **Superseded facts**: {superseded}\n")
-    lines.append("## Category Breakdown\n")
-    for row in categories:
-        lines.append(f"- **{row['category']}**: {row['c']}")
-
-    tech_facts = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'tech_fact' AND status = 'active' AND sensitivity != 'high-sensitivity'",
-        (program,)).fetchall()
-    if tech_facts:
-        lines.append("\n## Technology Facts\n")
-        for r in tech_facts:
-            lines.append(f"- {r['content']}")
-
-    scope_notes = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'scope_note' AND status = 'active'",
-        (program,)).fetchall()
-    if scope_notes:
-        lines.append("\n## Scope Notes\n")
-        for r in scope_notes:
-            lines.append(f"- {r['content']}")
-
-    fps = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'false_positive' AND status = 'active'",
-        (program,)).fetchall()
-    if fps:
-        lines.append(f"\n## Known False Positives ({len(fps)})\n")
-        for r in fps:
-            lines.append(f"- {r['content']}")
-
-    decisions = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'decision' AND status = 'active'",
-        (program,)).fetchall()
-    if decisions:
-        lines.append("\n## Past Decisions\n")
-        for r in decisions:
-            lines.append(f"- {r['content']}")
-
-    corrections = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'correction' AND status = 'active'",
-        (program,)).fetchall()
-    if corrections:
-        lines.append("\n## Corrections\n")
-        for r in corrections:
-            lines.append(f"- {r['content']}")
-
-    rate_notes = conn.execute(
-        "SELECT content FROM facts WHERE program = ? AND category = 'rate_limit_note' AND status = 'active'",
-        (program,)).fetchall()
-    if rate_notes:
-        lines.append("\n## Rate Limit Notes\n")
-        for r in rate_notes:
-            lines.append(f"- {r['content']}")
-
-    pending_review = conn.execute(
-        "SELECT COUNT(*) as c FROM facts WHERE program = ? AND category IN ('decision','false_positive','accepted_finding') AND reviewed_by_human = 0 AND status = 'active'",
-        (program,)).fetchone()["c"]
-    if pending_review > 0:
-        lines.append(f"\n- **Facts pending human review**: {pending_review}")
-
-    conn.close()
-    return {"status": "summarized", "program": program, "summary": "\n".join(lines)}
+    facts = search_facts(program, db_path=db_path)
+    return {'status': 'summarized', 'program': program, 'summary': '\n'.join(
+        f"[{fact['fact_id']}] {fact['content']}" for fact in facts[:50])}
 
 
 def export_safe(program, output_path, db_path=".bb/memory.sqlite"):
@@ -292,6 +232,7 @@ def export_safe(program, output_path, db_path=".bb/memory.sqlite"):
         ORDER BY created_at ASC
     """, (program,)).fetchall()
     conn.close()
+    rows = [r for r in rows if not _check_secrets(json.dumps(dict(r)))]
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         for r in rows:
@@ -317,7 +258,7 @@ def check_contradictions(program, db_path=".bb/memory.sqlite"):
     conn.close()
 
     contradictions = []
-    facts = [dict(r) for r in rows]
+    facts = [dict(r) for r in rows if r['sensitivity'] != 'high-sensitivity' and not _check_secrets(json.dumps(dict(r)))]
     contradiction_keywords = [
         (re.compile(r'\b(not|never|no|isnt|doesnt|cannot)\b', re.IGNORECASE),
          re.compile(r'\b(is|has|was|does|can|supports|uses)\b', re.IGNORECASE)),
@@ -355,10 +296,10 @@ def _build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Hard Rules:
-              Per-program isolation enforced (use --cross-program to override)
+              Per-program isolation enforced; cross-program overrides rejected
               Raw secrets in content: FORBIDDEN (detected by regex patterns)
               Auto-import from output: preview first, explicit --apply needed
-              Human review for high-impact facts: use --reviewed to mark as reviewed
+              Human review flags are rejected; operator review authority is separate
               Decay: facts with expires_at in the past become 'stale'
               Contradictions surfaced via 'contradictions' subcommand, never silently merged
         """)
@@ -383,6 +324,7 @@ def _build_parser():
 
     get_p = sub.add_parser("get", help="Retrieve one fact by ID")
     get_p.add_argument("--fact-id", required=True)
+    get_p.add_argument("--program", required=True)
     get_p.add_argument("--db", default=".bb/memory.sqlite")
 
     search_p = sub.add_parser("search", help="Search facts for a program")
@@ -395,6 +337,8 @@ def _build_parser():
 
     correct_p = sub.add_parser("correct", help="Record a correction that supersedes an existing fact")
     correct_p.add_argument("--fact-id", required=True)
+    correct_p.add_argument("--program", required=True)
+    correct_p.add_argument("--expected-revision", type=int, required=True)
     correct_p.add_argument("--new-content", required=True)
     correct_p.add_argument("--reason", required=True)
     correct_p.add_argument("--allow-secrets", action="store_true")
@@ -439,7 +383,7 @@ def main():
                 args.reviewed, args.db, args.allow_secrets
             )
         elif args.subcommand == "get":
-            result = get_fact(args.fact_id, args.db)
+            result = get_fact(args.fact_id, args.db, args.program)
             if result is None:
                 print(json.dumps({"error": "fact not found", "fact_id": args.fact_id}))
                 sys.exit(0)
@@ -447,7 +391,7 @@ def main():
             result = search_facts(args.program, args.category, args.status, args.query, args.db, args.cross_program)
             result = {"status": "ok", "program": args.program, "count": len(result), "facts": result}
         elif args.subcommand == "correct":
-            result = record_correction(args.fact_id, args.new_content, args.reason, args.db, args.allow_secrets)
+            result = record_correction(args.fact_id, args.new_content, args.reason, args.db, args.allow_secrets, args.program, args.expected_revision)
         elif args.subcommand == "decay":
             result = decay_facts(args.program, args.db)
         elif args.subcommand == "summarize":

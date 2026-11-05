@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BountyHarness session 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "program_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "campaign_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "client_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "principal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "last_seen": {
+      "type": "string"
+    },
+    "context_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "predecessor_session_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "program_id",
+    "campaign_id",
+    "provider",
+    "client_version",
+    "principal",
+    "created_at",
+    "last_seen",
+    "context_revision",
+    "predecessor_session_id"
+  ]
+}

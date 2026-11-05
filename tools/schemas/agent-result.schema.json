@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BountyHarness result 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "awaiting_approval",
+        "running",
+        "succeeded",
+        "failed",
+        "denied",
+        "interrupted",
+        "cancelled"
+      ]
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "unsupported_version",
+            "unsupported_capability",
+            "missing_tool",
+            "scope_denial",
+            "missing_approval",
+            "expired_approval",
+            "revoked_approval",
+            "budget_exhaustion",
+            "context_conflict",
+            "timeout",
+            "internal_failure",
+            "interrupted"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "ended_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "requests",
+        "artifact_bytes"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "principal": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "session_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "client_version": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "workflow_digest": {
+          "type": "string",
+          "pattern": "[a-f0-9]{64}"
+        },
+        "scope_digest": {
+          "type": "string",
+          "pattern": "[a-f0-9]{64}"
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "[a-f0-9]{64}"
+        }
+      },
+      "required": [
+        "principal",
+        "session_id",
+        "provider",
+        "client_version",
+        "workflow_digest",
+        "scope_digest",
+        "policy_digest"
+      ]
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "json"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "[a-f0-9]{64}"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "sha256",
+          "size"
+        ]
+      }
+    },
+    "diagnostic": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "run_id",
+    "status",
+    "exit_code",
+    "error",
+    "created_at",
+    "started_at",
+    "ended_at",
+    "budgets",
+    "provenance",
+    "artifacts",
+    "diagnostic"
+  ]
+}

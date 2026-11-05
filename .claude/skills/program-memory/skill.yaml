@@ -1,5 +1,5 @@
 name: program-memory
-version: 2.0.0
+version: 3.0.0
 description: Governed program memory with corrections, confidence, decay, and strict program isolation. Persist target-specific knowledge across engagements and feed learning back into planner rankings.
 bounded_context: ProgramMemoryContext
 safety_tier: passive
@@ -36,7 +36,7 @@ workflows:
         --sensitivity "${FACT_SENSITIVITY:-program-private}" \
         ${FACT_SOURCE_ARTIFACT:+--source-artifact "$FACT_SOURCE_ARTIFACT"} \
         ${FACT_EXPIRES_AT:+--expires-at "$FACT_EXPIRES_AT"} \
-        ${FACT_REVIEWED:+--reviewed}
+
     outputs:
       - .bb/memory.sqlite
     evidence_dir: $OUTDIR/program-memory
@@ -56,9 +56,10 @@ workflows:
   record-correction:
     description: Correct a previously recorded fact.
     safety_tier: passive
-    inputs: [FACT_ID, CORRECTION_CONTENT, CORRECTION_REASON]
+    inputs: [PROGRAM, FACT_ID, FACT_REVISION, CORRECTION_CONTENT, CORRECTION_REASON]
     command: |
       python3 .claude/skills/program-memory/scripts/memory_store.py correct \
+        --program "$PROGRAM" --expected-revision "${FACT_REVISION:?Set FACT_REVISION}" \
         --fact-id "${FACT_ID:?Set FACT_ID}" \
         --new-content "${CORRECTION_CONTENT:?Set CORRECTION_CONTENT}" \
         --reason "${CORRECTION_REASON:?Set CORRECTION_REASON}"

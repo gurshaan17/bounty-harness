@@ -63,6 +63,17 @@ def search_entries(entries, query):
     return results
 
 
+def search_catalogs(directory, query):
+    """Offline service entry point; directory is selected by trusted code."""
+    results = []
+    for filepath in sorted(directory.glob("*.yaml")):
+        if filepath.is_symlink():
+            raise ValueError("Catalog symlinks are unsupported")
+        entries = extract_entries(load_catalog(filepath), filepath.name)
+        results.extend(search_entries(entries, query))
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Search across all standard catalogs by keyword."
