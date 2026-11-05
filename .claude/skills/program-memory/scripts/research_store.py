@@ -56,10 +56,10 @@ class ResearchStore:
             with closing(sqlite3.connect(path)) as existing:
                 tables = {r[0] for r in existing.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 version = existing.execute('SELECT max(version) FROM memory_schema').fetchone()[0] if 'memory_schema' in tables else 0
-                if (version or 0) > 3:
+                if (version or 0) > 4:
                     raise ValueError('Unsupported memory schema')
-            if (version or 0) < 3:
-                backup(path, self.path.with_name(self.path.name + '.pre-v3-' + uuid.uuid4().hex + '.sqlite'))
+            if (version or 0) < 4:
+                backup(path, self.path.with_name(self.path.name + '.pre-v4-' + uuid.uuid4().hex + '.sqlite'))
         legacy.init_memory('migration', str(path))
         self.db = sqlite3.connect(path, timeout=10)
         self.db.row_factory = sqlite3.Row
@@ -68,7 +68,7 @@ class ResearchStore:
         try:
             self.db.execute('CREATE TABLE IF NOT EXISTS memory_schema(version INTEGER PRIMARY KEY)')
             version = self.db.execute('SELECT max(version) FROM memory_schema').fetchone()[0] or 0
-            if version > 3:
+            if version > 4:
                 raise ValueError('Unsupported memory schema')
             if version == 0:
                 self.db.execute('CREATE TABLE research_events(id TEXT PRIMARY KEY, program TEXT, entity TEXT, revision INTEGER, data TEXT, UNIQUE(program,entity,revision))')
@@ -95,6 +95,18 @@ class ResearchStore:
                     for operation in ('UPDATE', 'DELETE'):
                         self.db.execute(f"CREATE TRIGGER protect_{table}_{operation} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable planning history'); END")
                 self.db.execute('INSERT INTO memory_schema VALUES(3)')
+            if version < 4:
+                self.db.execute('CREATE TABLE findings(program TEXT, campaign TEXT, id TEXT PRIMARY KEY, revision INTEGER, data TEXT)')
+                self.db.execute('CREATE TABLE finding_events(id TEXT PRIMARY KEY, finding TEXT, revision INTEGER, data TEXT, UNIQUE(finding,revision))')
+                self.db.execute('CREATE TABLE evidence_bundles(id TEXT PRIMARY KEY, finding TEXT, data TEXT)')
+                self.db.execute('CREATE TABLE evidence_blobs(id TEXT PRIMARY KEY, program TEXT, data BLOB)')
+                self.db.execute('CREATE TABLE review_grants(id TEXT PRIMARY KEY, data TEXT)')
+                self.db.execute('CREATE TABLE review_sessions(id TEXT PRIMARY KEY, data TEXT)')
+                self.db.execute('CREATE TABLE review_records(id TEXT PRIMARY KEY, finding TEXT, data TEXT)')
+                for table in ('finding_events', 'evidence_bundles', 'evidence_blobs', 'review_sessions', 'review_records'):
+                    for operation in ('UPDATE', 'DELETE'):
+                        self.db.execute(f"CREATE TRIGGER protect_{table}_{operation} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable evidence/review history'); END")
+                self.db.execute('INSERT INTO memory_schema VALUES(4)')
             self.db.commit()
         except BaseException:
             self.db.rollback()

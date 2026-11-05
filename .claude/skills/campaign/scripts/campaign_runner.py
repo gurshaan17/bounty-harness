@@ -366,7 +366,12 @@ class Campaign:
                 planner = planning.Planner(store, program, self.campaign_id, {'actor': 'campaign-runner'})
                 tasks = planner.listing()
                 gate = load('campaign_completion', '.claude/skills/campaign/scripts/completion_gate.py')
-                assessment = gate.evaluate(store, program, self.campaign_id, tasks)
+                review_module = load('campaign_reviews', '.claude/skills/impact-verifier/scripts/review_store.py')
+                authority = review_module.registered_context(CAMPAIGN_ROOT.parent / 'agent-interface.sqlite3', program, self.campaign_id, f'uid:{os.getuid()}')
+                snapshot = self.dir / 'context.snapshot.json'
+                if authority and snapshot.is_file() and authority['scope_digest'] != json.loads(snapshot.read_text())['identity']['scope_digest']:
+                    authority = None
+                assessment = gate.evaluate(store, program, self.campaign_id, tasks, review_context=authority)
             finally:
                 store.db.close()
         obligations += assessment['obligations']
@@ -492,7 +497,7 @@ class Campaign:
             self.max_tier = "active-safe"
             print("=" * 64)
             print("AUTHORIZATION GATE: intrusive testing requires a scope/authorization")
-            print(f"file. None found (--scope-file). Capping this run at 'active-safe'.")
+            print("file. None found (--scope-file). Capping this run at 'active-safe'.")
             print("To run intrusive blackbox testing, pass --scope-file <authorization>.")
             print("=" * 64)
         else:

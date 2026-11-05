@@ -176,7 +176,7 @@ class InterfaceTests(unittest.TestCase):
     def test_bound_json_duplicate_fields_and_unsupported(self):
         for raw in (b'{"a":1,"a":2}', b'[' * 20 + b'0' + b']' * 20, b' ' * 65537, b'{"x":NaN}'):
             self.assert_error('invalid_input', decode, raw)
-        for op in ('review.record', 'grant.issue', 'shell'):
+        for op in ('human.confirm', 'report.submit', 'grant.issue', 'shell'):
             self.assert_error('unsupported_capability', self.call, op, {})
 
     def test_cli_json_and_error_exit(self):

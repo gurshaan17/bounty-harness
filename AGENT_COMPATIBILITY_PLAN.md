@@ -1,6 +1,6 @@
 # Agent compatibility implementation plan
 
-Status: Phase 1 documentation and Phase 3/4 local research persistence/planning are implemented. Phase 2 offline contracts are implemented with native acceptance limitations; Phase 5 onward remains planned. Production active dispatch still requires the Phase 6 external enforcement prerequisite. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md) and read ARCHITECTURE_AUDIT.md first.
+Status: Phase 1 documentation and Phase 3/4 local research persistence/planning and Phase 5 offline evidence/review are implemented. Phase 2 offline contracts are implemented with native acceptance limitations; Phase 6 onward remains planned. Production active dispatch still requires the Phase 6 external enforcement prerequisite. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md) and read ARCHITECTURE_AUDIT.md first.
 
 ## Design decision
 

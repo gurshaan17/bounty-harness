@@ -1,22 +1,7 @@
-# 04 — Report Readiness
+# Assess reportability
 
-## Overview
+Use the governed finding state and [Phase 5 review](../../../../docs/phase5-review.md), not a legacy readiness score. Evaluate technical validity, realistic reachability, deployment relevance, demonstrated impact and program eligibility separately. Unknown information stays unknown.
 
-Score report readiness.
+`bin/bb-run impact-verifier report-readiness` flags legacy file claims for independent review; it never grants report readiness. A separate human decision requires qualified evidence and an independent recommendation. Submission approval remains unavailable until the separate Phase 6 gate is implemented.
 
-## Prerequisites
-
-- `verified.jsonl` and `rejected.jsonl` exist from 03-verify.
-
-## Steps
-
-1. `bin/bb-run impact-verifier false-positive-gate`
-2. `bin/bb-run impact-verifier report-readiness`
-3. Inspect `readiness_report.md`.
-
-## Verification
-
-- `readiness_report.md` contains per-finding readiness scores.
-- Aggregate readiness score >= 80 is submission-ready.
-- Scores below 80 require further evidence collection or verification.
-- `fp_gate` output shows any false positive patterns caught.
+Completion: preserve every missing requirement, waiver rationale, unsupported impact and duplicate concern. Human-confirmed state still has submission_approved=false.

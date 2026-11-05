@@ -46,7 +46,7 @@ class Phase3Tests(unittest.TestCase):
         store = self.store()
         self.assertEqual(before, [tuple(row) for row in store.db.execute('SELECT * FROM facts ORDER BY fact_id')])
         self.assertEqual(original['fact_id'], store.get('p', correction['fact_id'])['legacy']['correction_of'])
-        backups = list(self.root.glob('*.pre-v3-*.sqlite'))
+        backups = list(self.root.glob('*.pre-v4-*.sqlite'))
         self.assertEqual(1, len(backups))
         with sqlite3.connect(backups[0]) as db:
             self.assertEqual(before, db.execute('SELECT * FROM facts ORDER BY fact_id').fetchall())
@@ -55,7 +55,7 @@ class Phase3Tests(unittest.TestCase):
         restored = memory.ResearchStore(snapshot)
         self.addCleanup(restored.db.close)
         self.assertEqual(store.query('p', history=original['fact_id']), restored.query('p', history=original['fact_id']))
-        self.assertEqual(3, store.db.execute('SELECT max(version) FROM memory_schema').fetchone()[0])
+        self.assertEqual(4, store.db.execute('SELECT max(version) FROM memory_schema').fetchone()[0])
         with self.assertRaises(sqlite3.IntegrityError):
             store.db.execute('DELETE FROM research_events')
 
@@ -175,7 +175,7 @@ class Phase3AcceptanceTests(unittest.TestCase):
         with sqlite3.connect(path) as db:
             self.assertEqual(1, db.execute('SELECT count(*) FROM facts').fetchone()[0])
             self.assertNotIn('research_events', {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")})
-        self.assertTrue(list(self.root.glob('*.pre-v3-*.sqlite')))
+        self.assertTrue(list(self.root.glob('*.pre-v4-*.sqlite')))
         self.assertEqual(1, len(self.store().query('p')))
 
     def test_legacy_security_overrides_rejected(self):

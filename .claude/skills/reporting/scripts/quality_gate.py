@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report Quality Gate — validates a bug bounty report is submission-ready before sending.
+"""Report Quality Gate — checks draft structure; independent evidence review and submission approval are separate.
 
 Checks:
   - Required sections present (summary, steps, PoC, impact)
@@ -82,7 +82,7 @@ def run_checks(report_path: str, finding_dir: str | None) -> dict:
 
     p = Path(report_path)
     if not p.exists():
-        return {"status": "error", "reason": f"report not found: {report_path}", "checks": [], "pass": False}
+        return {"status": "error", "reason": f"report not found: {report_path}", "checks": [], "pass": False, "submission_approved": False, "evidence_verified": False}
     content = p.read_text(encoding="utf-8")
     lower_content = content.lower()
 
@@ -146,6 +146,8 @@ def run_checks(report_path: str, finding_dir: str | None) -> dict:
         "errors": errors,
         "warnings": warnings,
         "pass": errors == 0,
+        "submission_approved": False,
+        "evidence_verified": False,
         "checks": checks,
     }
 
@@ -175,7 +177,7 @@ def main():
             detail = f" ({c['detail']})" if c["detail"] else ""
             print(f" [{icon}] {'PASS' if c['passed'] else 'FAIL'} {c['check']}{detail}")
         print()
-        verdict = "READY TO SUBMIT" if result["pass"] else "NOT READY — fix errors above"
+        verdict = "DRAFT FORMAT COMPLETE — evidence review and submission approval still required" if result["pass"] else "DRAFT INCOMPLETE — fix errors above"
         print(f"errors={result['errors']} warnings={result['warnings']}")
         print(verdict)
 

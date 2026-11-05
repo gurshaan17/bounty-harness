@@ -1,5 +1,5 @@
 name: program-memory
-version: 3.0.0
+version: 3.1.0
 description: Governed program memory with corrections, confidence, decay, and strict program isolation. Persist target-specific knowledge across engagements and feed learning back into planner rankings.
 bounded_context: ProgramMemoryContext
 safety_tier: passive

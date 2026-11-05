@@ -1,0 +1,428 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Independent evidence assessment; never approval authority",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdict",
+    "checks",
+    "reportability",
+    "waivers",
+    "duplicate_ids",
+    "follow_up"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "needs_evidence",
+        "reject",
+        "possible_duplicate",
+        "recommend_human_review"
+      ]
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_claim",
+        "evidence_support",
+        "alternative_explanations",
+        "unsupported_impact",
+        "reproducibility",
+        "scope_policy",
+        "duplicates",
+        "missing_evidence"
+      ],
+      "properties": {
+        "original_claim": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "evidence_support": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "alternative_explanations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "unsupported_impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "reproducibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "scope_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "duplicates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "missing_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conclusion",
+            "artifact_ids"
+          ],
+          "properties": {
+            "conclusion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        }
+      }
+    },
+    "reportability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "technical_validity",
+        "reachability",
+        "deployment_relevance",
+        "impact",
+        "program_eligibility"
+      ],
+      "properties": {
+        "technical_validity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "artifact_ids"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "unsupported",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "reachability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "artifact_ids"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "unsupported",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "deployment_relevance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "artifact_ids"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "unsupported",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "artifact_ids"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "unsupported",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        },
+        "program_eligibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "artifact_ids"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "unsupported",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "artifact_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        }
+      }
+    },
+    "waivers": {
+      "type": "object"
+    },
+    "duplicate_ids": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "follow_up": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    }
+  }
+}

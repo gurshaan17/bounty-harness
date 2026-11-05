@@ -32,6 +32,35 @@ def main():
         if command == "queue-adjust":
             control.add_argument("--position", required=True, type=int)
             control.add_argument("--deferred", action=argparse.BooleanOptionalAction, default=False)
+    evidence = sub.add_parser("evidence-import", help="Operator: import a bounded immutable evidence bundle")
+    evidence.add_argument("--session-id", required=True)
+    evidence.add_argument("--finding-id", required=True)
+    evidence.add_argument("--expected-revision", required=True, type=int)
+    evidence.add_argument("--manifest", required=True, type=Path)
+    evidence.add_argument("--evidence-root", required=True, type=Path)
+    legacy = sub.add_parser("legacy-import", help="Operator: import one legacy JSON finding as an unreviewed claim")
+    legacy.add_argument("--session-id", required=True)
+    legacy.add_argument("--hypothesis-id", required=True)
+    legacy.add_argument("--profile", required=True)
+    legacy.add_argument("--claim", required=True)
+    legacy.add_argument("--impact-class", required=True)
+    legacy.add_argument("--file", required=True, type=Path)
+    assign = sub.add_parser("review-assign", help="Operator: grant another authenticated principal a read-only review snapshot")
+    assign.add_argument("--session-id", required=True)
+    assign.add_argument("--finding-id", required=True)
+    assign.add_argument("--reviewer-principal", required=True)
+    assign.add_argument("--ttl", type=int, default=3600)
+    assign.add_argument("--reason", required=True)
+    revoke = sub.add_parser("review-revoke", help="Operator: revoke a read-only review grant")
+    revoke.add_argument("--session-id", required=True)
+    revoke.add_argument("--grant-id", required=True)
+    revoke.add_argument("--reason", required=True)
+    human = sub.add_parser("review-human", help="Operator: record a human decision; never grants submission")
+    human.add_argument("--review-session-id", required=True)
+    human.add_argument("--expected-revision", required=True, type=int)
+    human.add_argument("--assessment", required=True, type=Path)
+    human.add_argument("--decision", required=True, choices=["confirm", "reject", "needs_evidence"])
+    human.add_argument("--reason", required=True)
     args = parser.parse_args()
     if args.data_root:
         if not args.data_root.is_absolute() or args.data_root.resolve().is_relative_to(ROOT):
@@ -48,7 +77,54 @@ def main():
                 print(json.dumps(capabilities() if request["operation"] == "capabilities" else catalog(), sort_keys=True))
                 return 0
         service = Service(args.database, f"uid:{os.getuid()}")
-        if args.command in ("queue-adjust", "queue-dispose"):
+        if args.command in ("evidence-import", "legacy-import", "review-assign", "review-revoke", "review-human"):
+
+            def document(path):
+                with path.open("rb") as stream:
+                    return decode(stream.read(MAX_MESSAGE + 1))
+
+            if args.command == "evidence-import":
+                result = service.verification(
+                    {"session_id": args.session_id, "finding_id": args.finding_id, "expected_revision": args.expected_revision, "manifest": document(args.manifest)},
+                    "operator.evidence",
+                    operator=True,
+                    evidence_root=args.evidence_root,
+                )
+            elif args.command == "legacy-import":
+                original = document(args.file)
+                result = service.verification(
+                    {
+                        "session_id": args.session_id,
+                        "hypothesis_id": args.hypothesis_id,
+                        "profile": args.profile,
+                        "claim": args.claim,
+                        "impact_class": args.impact_class,
+                        "legacy": {"original": original, "sha256": hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest()},
+                    },
+                    "operator.legacy",
+                    operator=True,
+                )
+            elif args.command == "review-assign":
+                result = service.verification(
+                    {"session_id": args.session_id, "finding_id": args.finding_id, "reviewer_principal": args.reviewer_principal, "ttl": args.ttl, "reason": args.reason},
+                    "operator.review_assign",
+                    operator=True,
+                )
+            elif args.command == "review-revoke":
+                result = service.verification({"session_id": args.session_id, "grant_id": args.grant_id, "reason": args.reason}, "operator.review_revoke", operator=True)
+            else:
+                result = service.verification(
+                    {
+                        "review_session_id": args.review_session_id,
+                        "expected_revision": args.expected_revision,
+                        "assessment": document(args.assessment),
+                        "decision": args.decision,
+                        "reason": args.reason,
+                    },
+                    "operator.human_review",
+                    operator=True,
+                )
+        elif args.command in ("queue-adjust", "queue-dispose"):
             params = {"session_id": args.session_id, "task_id": args.task_id, "expected_revision": args.expected_revision, "reason": args.reason}
             if args.command == "queue-adjust":
                 params.update(position=args.position, deferred=args.deferred)

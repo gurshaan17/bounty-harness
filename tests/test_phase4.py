@@ -210,15 +210,15 @@ class Phase4Tests(unittest.TestCase):
         store = memory.ResearchStore(path)
         original = store.append("p", {"kind": "observation", "content": "fixture record"}, {})
         with store.db:
-            for table in ("research_plans", "research_queue", "queue_events"):
+            for table in ("research_plans", "research_queue", "queue_events", "findings", "finding_events", "evidence_bundles", "evidence_blobs", "review_grants", "review_sessions", "review_records"):
                 store.db.execute(f"DROP TABLE {table}")
-            store.db.execute("DELETE FROM memory_schema WHERE version=3")
+            store.db.execute("DELETE FROM memory_schema WHERE version>=3")
         store.db.close()
         upgraded = memory.ResearchStore(path)
         self.addCleanup(upgraded.db.close)
         self.assertEqual(original, upgraded.get("p", original["id"]))
-        self.assertTrue(list(self.path.glob("v2.sqlite.pre-v3-*.sqlite")))
-        self.assertEqual(3, upgraded.db.execute("SELECT max(version) FROM memory_schema").fetchone()[0])
+        self.assertTrue(list(self.path.glob("v2.sqlite.pre-v4-*.sqlite")))
+        self.assertEqual(4, upgraded.db.execute("SELECT max(version) FROM memory_schema").fetchone()[0])
 
     def test_capabilities_expose_only_offline_queue_controls(self):
         info = capabilities()

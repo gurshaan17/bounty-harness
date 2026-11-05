@@ -1,6 +1,6 @@
 name: impact-verifier
-version: 1.0.0
-description: Convert candidate findings into confirmed bounty-grade reports only when impact is proven.
+version: 2.0.0
+description: Qualify immutable evidence, record independent review and separate human decisions from submission approval.
 bounded_context: ImpactContext
 safety_tier: passive
 owasp_wstg:
@@ -13,6 +13,24 @@ tools_required:
   - jq
 input_files: []
 workflows:
+  record-review:
+    description: Record an independent structured assessment against an assigned read-only evidence snapshot.
+    inputs: [OUTDIR, REVIEW_REQUEST]
+    auth_required: false
+    side_effects: [local_state_write]
+    safety_tier: passive
+    command: |
+      python3 .claude/skills/impact-verifier/scripts/review_workflow.py \
+        --request "${REVIEW_REQUEST:?Set REVIEW_REQUEST to a review.record JSON request}" \
+        --output "$OUTDIR/impact-verifier/review.json"
+    outputs:
+      - $OUTDIR/impact-verifier/review.json
+    evidence_dir: $OUTDIR/impact-verifier
+    detection_signals:
+      - "review records principal/session, evidence references, alternatives and reportability dimensions"
+    false_positives:
+      - "independent agent recommendations do not confirm findings or approve submission"
+
   collect-candidates:
     description: Aggregate candidate findings from all skill output directories.
     inputs: [OUTDIR]
@@ -46,7 +64,7 @@ workflows:
       if_no_findings: null
 
   verify-data-exposure:
-    description: Prove actual data exposure from unauthorized access.
+    description: Collect class-matched unreviewed claims for governed evidence review; classification does not prove impact.
     inputs: [OUTDIR]
     command: |
       mkdir -p $OUTDIR/impact-verifier/evidence && \
@@ -57,8 +75,8 @@ workflows:
     evidence_dir: $OUTDIR/impact-verifier/evidence/
     safety_tier: passive
     detection_signals:
-      - "private/PII/sensitive fields confirmed in unauthorized response"
-      - "data belongs to a different user or tenant"
+      - "class-matched claims remain unreviewed until governed evidence review"
+      - "ownership and tenant assertions require independent evidence assessment"
     false_positives:
       - "public or intentionally shared data"
       - "example or test data"
@@ -67,7 +85,7 @@ workflows:
       if_no_findings: verify-privilege-escalation
 
   verify-privilege-escalation:
-    description: Prove role or permission boundary was broken.
+    description: Collect class-matched unreviewed claims for governed evidence review; classification does not prove impact.
     inputs: [OUTDIR]
     command: |
       mkdir -p $OUTDIR/impact-verifier/evidence && \
@@ -82,7 +100,7 @@ workflows:
       if_no_findings: verify-account-takeover
 
   verify-account-takeover:
-    description: Prove full account takeover path.
+    description: Collect class-matched unreviewed claims for governed evidence review; classification does not prove impact.
     inputs: [OUTDIR]
     command: |
       mkdir -p $OUTDIR/impact-verifier/evidence && \
@@ -97,7 +115,7 @@ workflows:
       if_no_findings: verify-tenant-break
 
   verify-tenant-break:
-    description: Prove cross-tenant data access.
+    description: Collect class-matched unreviewed claims for governed evidence review; classification does not prove impact.
     inputs: [OUTDIR]
     command: |
       mkdir -p $OUTDIR/impact-verifier/evidence && \
@@ -128,7 +146,7 @@ workflows:
       if_no_findings: report-readiness
 
   report-readiness:
-    description: Score each confirmed finding for submission readiness.
+    description: Identify legacy file claims requiring governed evidence review.
     inputs: [OUTDIR]
     command: |
       mkdir -p $OUTDIR/impact-verifier && \
@@ -138,8 +156,8 @@ workflows:
     evidence_dir: $OUTDIR/impact-verifier
     safety_tier: passive
     detection_signals:
-      - "findings scored 80+ are submission-ready"
-      - "findings below 60 need more evidence"
+      - "legacy file labels never establish report readiness"
+      - "submission approval remains unavailable"
     next:
       if_findings: cvss4-score
       if_no_findings: cvss4-score
@@ -188,7 +206,7 @@ workflows:
       if_no_findings: null
 
 evidence_templates:
-  verified_finding: "Confirmed impact with classification, evidence manifest, false-positive checks"
+  verified_finding: "Legacy filename only; candidate requires immutable manifest and independent review"
   readiness_report: "Scored findings with evidence gaps and fix recommendations"
   cvss4_score: "CVSS 4.0 vector, metrics breakdown, macrovector, severity class"
   impact_narrative: "Impact text, attack scenario, observed data classes, CVSS hints"

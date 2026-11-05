@@ -1,6 +1,6 @@
 # Phase 3: persistent research and campaign recovery
 
-Phase 3 extends the existing SQLite facts store. Phase 4 adds migration 3 for plans and queue history; see [research planning](phase4-planning.md). Migration 1 adds research events and projections; migration 2 freezes migrated legacy history. Existing fact IDs, correction links and rows survive unchanged. Imports remain legacy-unreviewed regardless of old review flags. New events are append-only; projection updates and events commit in one transaction. A database newer than the supported schema is rejected. Older clients can read legacy tables but their writes fail explicitly after migration, preventing divergent histories.
+Phase 3 extends the existing SQLite facts store. Phase 4 adds migration 3 for plans and queue history; Phase 5 adds migration 4 for evidence/review; see [research planning](phase4-planning.md). Migration 1 adds research events and projections; migration 2 freezes migrated legacy history. Existing fact IDs, correction links and rows survive unchanged. Imports remain legacy-unreviewed regardless of old review flags. New events are append-only; projection updates and events commit in one transaction. A database newer than the supported schema is rejected. Older clients can read legacy tables but their writes fail explicitly after migration, preventing divergent histories.
 
 ## Private data and migration
 
@@ -13,7 +13,7 @@ python3 .claude/skills/program-memory/scripts/research_admin.py migrate --source
 python3 .claude/skills/program-memory/scripts/research_admin.py backup --source .bb/agent-interface.sqlite3 --destination /absolute/private/directory/agent-interface.sqlite3
 ```
 
-Destination files must not exist. Migrate preserves the source and adds the new schema to the copy. Existing databases also receive uniquely named `.pre-v3-*.sqlite` backups before migration. `backup` copies without migrating; `restore` consistently copies a backup to a fresh destination. To roll back, stop writers and select the preserved source or a restored previous-version copy. Restrictive directories/databases protect local state; encryption and backup retention are operator responsibilities.
+Destination files must not exist. Migrate preserves the source and adds the new schema to the copy. Existing databases also receive uniquely named `.pre-v4-*.sqlite` backups before migration. `backup` copies without migrating; `restore` consistently copies a backup to a fresh destination. To roll back, stop writers and select the preserved source or a restored previous-version copy. Restrictive directories/databases protect local state; encryption and backup retention are operator responsibilities.
 
 ## Research operations
 

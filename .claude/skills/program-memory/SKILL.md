@@ -9,6 +9,7 @@ Use `bin/bb-agent` research operations described in docs/phase3-memory.md for mi
 Existing skill.yaml workflows remain available for legacy stores. Once migrated, legacy fact writes fail explicitly; use the research API. Never set reviewed, allow-secrets or cross-program overrides. Agent scope notes do not change authoritative scope. A negative result records what was tested, conditions, evidence and an expiry/retest trigger; it does not prove a surface permanently safe.
 
 ## Storage and migration
+Phase 5 stores governed findings, immutable evidence and independent review separately from ordinary research assertions; use [the review operations](../../../docs/phase5-review.md) for those records.
 The research API extends the existing facts SQLite database with numbered transactional migrations, immutable events and query projections. Original fact IDs and correction links remain intact. It creates a consistent pre-migration backup before changing existing databases. Migrate/import, backup and restore commands are in scripts/research_admin.py and docs/phase3-memory.md. Originals are never moved or deleted automatically.
 
 Use an operator-selected private data root. Runtime databases and backups stay out of Git. All source metadata and correction reasons are checked for secrets; exports recheck records. Sensitivity propagates through source references. Human review is a separate authority, unavailable through agent flags.
@@ -17,7 +18,7 @@ Use an operator-selected private data root. Runtime databases and backups stay o
 Link existing asset-graph, traffic-corpus and coverage IDs rather than copying their stores. Evidence references use registered opaque artifact IDs and hashes. Preserve source IDs, revisions, confidence and observation/inference labels. Contradiction detection only proposes review and never merges claims.
 
 ## Quick Reference
-- Skill: `program-memory`, version 3.0.0; passive local storage.
+- Skill: `program-memory`, version 3.1.0; passive local storage.
 - Canonical research interface: `bin/bb-agent`; SQLite store is local-only, never committed, protected by .gitignore.
 - Redaction policy: reject detected secrets before persistence and recheck retrieval/export; omit high-sensitivity records from derived views.
 

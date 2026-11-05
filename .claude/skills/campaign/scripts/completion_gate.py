@@ -1,13 +1,39 @@
 """Deterministic completion assessment. Model declarations cannot discharge obligations."""
 
 
-def evaluate(store, program, campaign, queue, stop_reason=None, budget_exhausted=False):
+def evaluate(store, program, campaign, queue, stop_reason=None, budget_exhausted=False, review_context=None):
+    import importlib.util
+    import json
+    from pathlib import Path
+
     obligations = []
+    resolved_hypotheses = set()
+    path = Path(__file__).resolve().parents[2] / "impact-verifier/scripts/review_store.py"
+    spec = importlib.util.spec_from_file_location("gate_reviews", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    reviews = module.Reviews(store, "completion-gate")
+    for row in store.db.execute("SELECT data FROM findings WHERE program=? AND campaign=? ORDER BY id", (program, campaign)):
+        finding = json.loads(row[0])
+        resolved = False
+        try:
+            if review_context is not None:
+                status = reviews.status(finding, review_context)
+                resolved = not status["stale"] and (
+                    status["human_confirmed"] or status.get("human_decision") == "reject" or status.get("last_review_kind") == "independent_agent" and status.get("last_verdict") == "reject"
+                )
+        except (ValueError, TypeError, KeyError):
+            pass
+        if resolved:
+            resolved_hypotheses.add(finding["hypothesis_id"])
+        else:
+            obligations.append({"kind": "finding_review", "id": finding["id"], "reason": "Evidence/review/human decision remains unresolved or stale"})
     for task in queue:
         if task["state"] not in ("investigated", "closed", "cancelled"):
             obligations.append({"kind": "task", "id": task["id"], "reason": task.get("reason") or task["state"]})
         elif task["state"] == "investigated":
-            if task.get("hypothesis_verdict") in ("unresolved", "inconclusive", "needs_review"):
+            linked_review_resolved = task["opportunity"].get("hypothesis_id") in resolved_hypotheses or bool(set(task["source_revisions"]) & resolved_hypotheses)
+            if task.get("hypothesis_verdict") in ("unresolved", "inconclusive", "needs_review") and not linked_review_resolved:
                 obligations.append(
                     {"kind": "review" if task.get("hypothesis_verdict") == "needs_review" else "hypothesis", "id": task["id"], "reason": "Investigation leaves an unresolved obligation"}
                 )
@@ -30,10 +56,11 @@ def evaluate(store, program, campaign, queue, stop_reason=None, budget_exhausted
         if record["id"] not in campaign_ids or record["kind"] not in ("hypothesis", "question"):
             continue
         related = [q for q in queue if record["id"] in q["source_revisions"] or q["opportunity"].get("hypothesis_id") == record["id"]]
+        reviewed = record["id"] in resolved_hypotheses or bool(set(record.get("sources", [])) & resolved_hypotheses)
         if record.get("details", {}).get("obligation") == "review":
-            resolved = any(q["state"] == "closed" and q.get("operator_disposed") for q in related)
+            resolved = reviewed or any(q["state"] == "closed" and q.get("operator_disposed") for q in related)
         else:
-            resolved = any(q["state"] in ("closed", "cancelled") or (q["state"] == "investigated" and q["hypothesis_verdict"] in ("supported", "rejected")) for q in related)
+            resolved = reviewed or any(q["state"] in ("closed", "cancelled") or (q["state"] == "investigated" and q["hypothesis_verdict"] in ("supported", "rejected")) for q in related)
         if not resolved:
             obligations.append({"kind": "review" if record.get("details", {}).get("obligation") == "review" else record["kind"], "id": record["id"], "reason": "No recorded resolution or disposition"})
     status = "operator_stopped" if stop_reason else "budget_exhausted" if budget_exhausted else "blocked" if obligations else "completed"

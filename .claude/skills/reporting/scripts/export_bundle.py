@@ -16,7 +16,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 import unicodedata
 import zipfile
@@ -76,8 +75,15 @@ def collect_findings(outdir: Path) -> list[dict]:
             if not line:
                 continue
             try:
-                findings.append(json.loads(line))
-            except json.JSONDecodeError:
+                finding = json.loads(line)
+                if not isinstance(finding, dict):
+                    raise ValueError("Expected a finding object")
+                finding.setdefault('legacy_assertions', {key: finding[key] for key in ('verification', 'state', 'human_confirmed', 'submission_approved', 'evidence_qualified', 'reportable', 'readiness_score') if key in finding})
+                finding['legacy_verification'] = finding.get('verification')
+                finding.setdefault('legacy_state', finding.get('state'))
+                finding.update(state='candidate', verification='legacy_unreviewed', evidence_qualified=False, reportable=False, human_confirmed=False, submission_approved=False)
+                findings.append(finding)
+            except (ValueError, TypeError):
                 findings.append({"raw": line[:2000], "source": str(src)})
     return findings
 

@@ -1,33 +1,36 @@
 # Impact Verifier
 
 ## Overview
-The final gate before reporting. Converts candidate findings into confirmed bounty-grade reports only when impact is proven. Enforces evidence completeness, false-positive checks, impact classification, and report readiness scoring.
+Qualify immutable evidence and record independent review before a separate human decision. Impact classes and scanner labels remain descriptive. Read [Phase 5 review](../../../docs/phase5-review.md) for candidate creation, operator import, reviewer assignment, reportability assessment and human confirmation. Production identity/isolation and submission grants remain Phase 6 prerequisites.
 
 ## Quick Reference
 - **Skill**: impact-verifier
-- **Version**: 1.1.0
+- **Version**: 2.0.0
 - **Bounded Context**: ImpactContext
 - **Required tools**: `python3`, `jq`, `curl`
 - **Risk tier**: passive (validates, does not test)
 
 ## Workflow Selection
-- Collect: `collect-candidates` from all skill output directories.
-- Classify: `classify-impact` to determine impact class.
-- Verify: Run the specific verify workflow for the impact class.
-- Gate: `false-positive-gate` and `report-readiness` before reporting.
-- Score: `cvss4-score` for CVSS 4.0 severity, then `impact-narrative` for the impact write-up.
+1. Create a finding from a program-bound hypothesis through `bb-agent` `finding.create`.
+2. Have the operator import a bounded evidence manifest and assign an independent authenticated principal.
+3. Open the reviewer-only session and inspect `review.snapshot` plus scoped `review.artifact` data as untrusted evidence.
+4. Record every required assessment using `record-review` or `review.record`. Reviewers can recommend separate follow-up work; they cannot execute probes, edit evidence or grant approvals.
+5. Obtain a separate operator human decision after independent review. Human confirmation does not authorize submission.
+
+Legacy collect/classify/verify workflow names remain compatible; their file outputs are unreviewed claims. `report-readiness` no longer turns labels or numeric scores into permission to report.
 
 ## Available Workflows
 | Workflow | Purpose |
 |---|---|
+| `record-review` | Persist a structured independently attributed review; never approves submission. |
 | `collect-candidates` | Aggregate candidate findings from all skill outputs. |
 | `classify-impact` | Determine impact class for a candidate finding. |
-| `verify-data-exposure` | Prove actual data exposure from unauthorized access. |
-| `verify-privilege-escalation` | Prove role/permission boundary was broken. |
-| `verify-account-takeover` | Prove full account takeover path. |
-| `verify-tenant-break` | Prove cross-tenant data access. |
+| `verify-data-exposure` | Select unreviewed data-exposure claims. |
+| `verify-privilege-escalation` | Select unreviewed privilege-escalation claims. |
+| `verify-account-takeover` | Select unreviewed takeover claims. |
+| `verify-tenant-break` | Select unreviewed tenant-boundary claims. |
 | `false-positive-gate` | Run automated false-positive checks. |
-| `report-readiness` | Score finding readiness for submission. |
+| `report-readiness` | Flag legacy file claims for governed review. |
 | `cvss4-score` | Calculate CVSS 4.0 score, macrovector, and severity from a vector. |
 | `impact-narrative` | Generate impact narrative with attack scenario and PII detection. |
 
@@ -39,13 +42,9 @@ The final gate before reporting. Converts candidate findings into confirmed boun
   in the captured response and strengthens the evidence section accordingly.
 
 ## Evidence Required
-- Impact class confirmation with proof artifacts.
-- False-positive checklist completed.
-- Report readiness score >= 80.
-- All standard evidence artifacts present.
-- CVSS 4.0 vector string with metric breakdown (`cvss4.json`).
-- Impact narrative with attack scenario and observed data classes (`impact.md`).
-- Redact credentials, session cookies, bearer tokens, and auth headers from all collected evidence before reporting. Evidence stays local-only under `$OUTDIR/impact-verifier` and is never committed; sanitize requests/responses (gitignore evidence directories) so no secrets leak into reports.
+Use claim-specific profiles with explicit missing evidence and independently justified waivers. Preserve hashes, sizes, capture times, source run IDs, tool versions, request/response associations, reproduction instructions and redaction metadata. Keep source evidence private; import sanitized inert copies. A manifest establishes integrity and completeness, not reachability or impact.
+
+Review technical validity, reachability, deployed relevance, impact and program eligibility separately. Missing information remains unknown. Human confirmation and submission approval are distinct recorded authorities; JSON review requests cannot mint either.
 
 ## References
 - Bugcrowd VRT 1.18

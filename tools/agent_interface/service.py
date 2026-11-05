@@ -206,12 +206,121 @@ class Service:
             planner.listing()
             with store.db:
                 store.db.execute("BEGIN")
-                assessment = gate.evaluate(store, session["program_id"], session["campaign_id"], planner.rows())
+                assessment = gate.evaluate(store, session["program_id"], session["campaign_id"], planner.rows(), review_context=context)
             return assessment
         except planning.PlanningConflict:
             raise InterfaceError("context_conflict", "Queue revision or research inputs changed") from None
         except (ValueError, TypeError, KeyError, AttributeError):
             raise InterfaceError("invalid_input", "Invalid planning input, stale revision, or unavailable operation") from None
+        finally:
+            store.db.close()
+
+    def verification(self, params, operation, operator=False, evidence_root=None):
+        import base64
+        import importlib.util
+
+        definitions = {
+            "finding.create": ({"session_id", "hypothesis_id", "claim", "impact_class", "profile"}, set()),
+            "finding.list": ({"session_id"}, {"offset"}),
+            "evidence.manifest": ({"session_id", "finding_id"}, {"bundle_id"}),
+            "evidence.read": ({"session_id", "finding_id", "artifact_id"}, {"bundle_id"}),
+            "finding.get": ({"session_id", "finding_id"}, set()),
+            "finding.history": ({"session_id", "finding_id"}, set()),
+            "operator.evidence": ({"session_id", "finding_id", "expected_revision", "manifest"}, set()),
+            "operator.legacy": ({"session_id", "hypothesis_id", "claim", "impact_class", "profile", "legacy"}, set()),
+            "operator.review_assign": ({"session_id", "finding_id", "reviewer_principal", "ttl", "reason"}, set()),
+            "operator.review_revoke": ({"session_id", "grant_id", "reason"}, set()),
+            "review.open": ({"grant_id", "provider", "client_version"}, set()),
+            "review.snapshot": ({"review_session_id"}, set()),
+            "review.artifact": ({"review_session_id", "artifact_id"}, set()),
+            "review.record": ({"review_session_id", "expected_revision", "assessment"}, set()),
+            "operator.human_review": ({"review_session_id", "expected_revision", "assessment", "decision", "reason"}, set()),
+        }
+        required, optional = definitions[operation]
+        properties = {k: ID for k in ("session_id", "finding_id", "hypothesis_id", "reviewer_principal", "grant_id", "review_session_id", "artifact_id", "provider", "client_version", "bundle_id")}
+        properties.update({k: {"type": "string", "minLength": 1, "maxLength": 8192} for k in ("claim", "impact_class", "profile", "reason", "decision")})
+        properties.update(
+            expected_revision={"type": "integer", "minimum": 1}, ttl={"type": "integer", "minimum": 1}, manifest={"type": "object"}, assessment={"type": "object"}, legacy={"type": "object"}
+        )
+        properties["bundle_id"] = ID
+        properties["offset"] = {"type": "integer", "minimum": 0}
+        validate(params, {"type": "object", "required": list(required), "additionalProperties": False, "properties": {k: properties[k] for k in required | optional}})
+        if operation.startswith("operator.") and not operator:
+            raise InterfaceError("scope_denial", "Operator transport required")
+        if "assessment" in params:
+            validate(params["assessment"], json.loads((self.root / "tools/schemas/evidence-review.schema.json").read_text()))
+        module, store = self.memory()
+        path = self.root / ".claude/skills/impact-verifier/scripts/review_store.py"
+        spec = importlib.util.spec_from_file_location("bh_reviews", path)
+        review_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(review_module)
+        reviews = review_module.Reviews(store, self.principal)
+
+        def current_context(program, campaign):
+            row = self.db.execute("SELECT * FROM contexts WHERE program=? AND campaign=?", (program, campaign)).fetchone()
+            if not row:
+                raise ValueError("Review context missing")
+            return {"program_id": program, "campaign_id": campaign, "context_revision": row["revision"], "scope_digest": row["scope"], "policy_digest": row["policy"]}
+
+        try:
+            if operation == "review.open":
+                if params["provider"] not in PROVIDERS:
+                    raise ValueError("Unknown reviewer provider")
+                return reviews.open(params["grant_id"], params["provider"], params["client_version"])
+            if "review_session_id" in params:
+                sid = params["review_session_id"]
+                if operation in ("review.record", "operator.human_review"):
+                    return reviews.record(
+                        sid,
+                        params["expected_revision"],
+                        params["assessment"],
+                        current_context,
+                        human=operation == "operator.human_review",
+                        decision=params.get("decision"),
+                        reason=params.get("reason"),
+                    )
+                if operation == "review.snapshot":
+                    return reviews.snapshot(sid, current_context)
+                session, grant, candidate, bundle = reviews.reviewer(sid, current_context)
+                artifact, data = reviews.artifact_bytes(bundle, params["artifact_id"])
+                return {"artifact": artifact, "encoding": "base64", "data": base64.b64encode(data).decode(), "executable": False}
+            session = self.session(params["session_id"])
+            context = self.context(session["program_id"], session["campaign_id"])
+            if session["context_revision"] != context["context_revision"]:
+                raise review_module.ReviewConflict("Session context changed")
+            if operation in ("finding.create", "operator.legacy"):
+                return reviews.create(context, session, params["hypothesis_id"], params["claim"], params["impact_class"], params["profile"], params.get("legacy"))
+            if operation == "operator.review_revoke":
+                return reviews.revoke(params["grant_id"], context, params["reason"])
+            if operation == "finding.list":
+                return reviews.listing(context, params.get("offset", 0))
+            candidate = reviews.owned(params["finding_id"], context, session)
+            if operation in ("evidence.manifest", "evidence.read"):
+                selected = {**candidate, "bundle_id": params.get("bundle_id", candidate["bundle_id"])}
+                bundle = reviews.bundle(selected)
+                if operation == "evidence.manifest":
+                    return {"manifest": bundle, "trust": "untrusted_evidence", "submission_approved": False}
+                artifact, data = reviews.artifact_bytes(bundle, params["artifact_id"])
+                return {"artifact": artifact, "encoding": "base64", "data": base64.b64encode(data).decode(), "executable": False}
+            if operation == "finding.history":
+                return {"events": reviews.history(candidate["id"])}
+            if operation == "finding.get":
+                return reviews.status(candidate, context)
+            if operation == "operator.review_assign":
+                return reviews.assign(candidate, context, params["reviewer_principal"], params["ttl"], params["reason"])
+
+            def verify_run(run_id):
+                if not isinstance(run_id, str):
+                    raise ValueError("Invalid source run")
+                rows = self.db.execute("SELECT result FROM tasks WHERE program=? AND campaign=? AND principal=?", (context["program_id"], context["campaign_id"], self.principal))
+                if not any((result := json.loads(row[0]))["run_id"] == run_id and result["status"] == "succeeded" for row in rows):
+                    raise ValueError("Unknown or unsuccessful source run")
+
+            return reviews.import_bundle(context, session, candidate["id"], params["expected_revision"], params["manifest"], evidence_root, verify_run)
+        except review_module.ReviewConflict:
+            raise InterfaceError("context_conflict", "Finding, evidence or context revision changed") from None
+        except (ValueError, TypeError, KeyError, AttributeError, OSError):
+            raise InterfaceError("invalid_input", "Invalid evidence/review input, ownership, integrity or authority") from None
         finally:
             store.db.close()
 
@@ -233,6 +342,9 @@ class Service:
             "context": context,
             "session_id": session["session_id"],
             "research_queue": {"tasks": queue[:20], "total": len(queue), "truncated_to": 20},
+            "finding_review": self.verification({"session_id": session["session_id"]}, "finding.list")
+            if session["context_revision"] == context["context_revision"]
+            else {"findings": [], "stale_context": True},
             "sensitivity": "internal",
             "trust": "derived",
             "source_ids": [t["task_id"] for t in tasks],
@@ -366,6 +478,8 @@ class Service:
         if op in ("capabilities", "discover"):
             fields(params, [])
             return capabilities() if op == "capabilities" else catalog(self.root)
+        if op in ("finding.create", "finding.get", "finding.list", "evidence.manifest", "evidence.read", "finding.history", "review.open", "review.snapshot", "review.artifact", "review.record"):
+            return self.verification(params, op)
         if op in (
             "plan.generate",
             "plan.get",
