@@ -1,6 +1,6 @@
 # Agent-agnostic research environment: implementation roadmap
 
-Status: proposed future implementation. This file does not authorize execution or claim that the features below exist. Phase 1 is complete; Phase 2 onward requires the user's approval. This document expands [the compatibility plan](../AGENT_COMPATIBILITY_PLAN.md) and addresses findings A1–A12 in [the architecture audit](../ARCHITECTURE_AUDIT.md).
+Status: Phase 1 documentation and Phase 3 local persistence/recovery implementation are complete. Phase 2 offline contracts/adapters are implemented, with full native-client acceptance still limited as recorded in the [phase ledger](AGENT_AGNOSTIC_PHASE_LEDGER.md). Phase 4 onward remains planned; active production dispatch still requires the Phase 6 external enforcement prerequisite. The user authorized Phase 2 and Phase 3 implementation in this session. This roadmap does not itself authorize target testing. It expands [the compatibility plan](../AGENT_COMPATIBILITY_PLAN.md) and addresses findings A1–A12 in [the architecture audit](../ARCHITECTURE_AUDIT.md).
 
 ## 1. Intended outcome and constraints
 

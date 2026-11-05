@@ -18,7 +18,7 @@ if [ -d "$REPO_ROOT/venv/bin" ]; then
   export PATH="$REPO_ROOT/venv/bin:$PATH"
 fi
 HARNESS_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
-BB_DIR="$REPO_ROOT/.bb"
+BB_DIR="${BB_CONTEXT_DIR:-$REPO_ROOT/.bb}"
 
 usage() {
   echo "Usage: bb-init <target-domain> [--program NAME] [--scope-file FILE] [--scheme https] [--port 443] [--outdir DIR]"

@@ -28,7 +28,7 @@ cd "$REPO_ROOT"
 echo "=== Validating context (v$HARNESS_VERSION) ==="
 # Runtime-generated env file; intentionally not a static source target
 # shellcheck source=/dev/null
-source "$REPO_ROOT/.bb/context.env" 2>/dev/null || { echo "Run: bb-init <target>"; exit 1; }
+source "${BB_CONTEXT_FILE:-$REPO_ROOT/.bb/context.env}" 2>/dev/null || { echo "Run: bb-init <target>"; exit 1; }
 MISSING=0
 for VAR in TARGET TARGET_URL OUTDIR EVIDENCE_DIR SCOPE_FILE; do
   if [ -z "${!VAR:-}" ]; then echo "MISSING: $VAR"; MISSING=1; fi

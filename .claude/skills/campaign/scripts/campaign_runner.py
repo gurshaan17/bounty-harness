@@ -28,11 +28,20 @@ import re
 import subprocess
 import sys
 import time
+import hashlib
+import shlex
+import uuid
+import signal
+import fcntl
+from recovery import Recovery, atomic_json, hash_value
 from datetime import datetime, timezone
 from pathlib import Path
 
 TIERS = {"passive": 0, "active-safe": 1, "intrusive": 2, "destructive-manual": 3}
-CAMPAIGN_ROOT = Path(".bb/campaigns")
+_private_root = os.environ.get('BB_DATA_ROOT')
+if _private_root and (not Path(_private_root).is_absolute() or Path(_private_root).resolve().is_relative_to(Path(__file__).resolve().parents[4])):
+    raise ValueError('BB_DATA_ROOT must be absolute and outside the repository')
+CAMPAIGN_ROOT = Path(_private_root) / 'campaigns' if _private_root else Path('.bb/campaigns')
 
 # Plan/skill category -> actual skill directory name.
 SKILL_ALIASES = {
@@ -180,19 +189,28 @@ class Campaign:
             self.log_fh.flush()
 
     def setup_dir(self, target, resume_id=None):
-        CAMPAIGN_ROOT.mkdir(parents=True, exist_ok=True)
+        if resume_id and not re.fullmatch(r"[A-Za-z0-9_.-]+", resume_id):
+            raise ValueError("Invalid campaign ID")
+        CAMPAIGN_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
         if resume_id:
             self.campaign_id = resume_id
             self.dir = CAMPAIGN_ROOT / resume_id
             if not self.dir.is_dir():
                 sys.exit(f"ERROR: campaign {resume_id} not found under {CAMPAIGN_ROOT}")
-            self._load_completed()
+            # Execution database, not partial JSONL, owns completed task identity.
         else:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             safe = re.sub(r"[^A-Za-z0-9_.-]", "_", target)
-            self.campaign_id = f"{safe}_{stamp}"
+            self.campaign_id = f"{safe}_{stamp}_{uuid.uuid4().hex[:8]}"
             self.dir = CAMPAIGN_ROOT / self.campaign_id
-            self.dir.mkdir(parents=True, exist_ok=True)
+            self.dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+        self.lock_fh = open(self.dir / 'campaign.lock', 'a')
+        try:
+            fcntl.flock(self.lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.lock_fh.close()
+            raise ValueError('Campaign is already running')
+        self.recovery = Recovery(self.dir)
         self.log_fh = open(self.dir / "campaign.log", "a")
         self.results_fh = open(self.dir / "results.jsonl", "a")
 
@@ -224,7 +242,7 @@ class Campaign:
         if extra:
             status.update(extra)
         if self.dir:
-            (self.dir / "status.json").write_text(json.dumps(status, indent=2))
+            atomic_json(self.dir / "status.json", status)
         return status
 
     # Explicit FSM: RECON->PLAN->EXECUTE->VERIFY->REPORT persisted so external
@@ -249,7 +267,7 @@ class Campaign:
             if len(state["history"]) > 50:
                 state["history"] = state["history"][-50:]
         state["updated_at"] = now_iso()
-        state_path.write_text(json.dumps(state, indent=2))
+        atomic_json(state_path, state)
 
     # ---- execution primitives ----
     def run_cmd(self, argv, label, timeout=None):
@@ -258,12 +276,28 @@ class Campaign:
             self.log(f"DRY-RUN would execute: {' '.join(argv)}")
             return 0
         try:
-            r = subprocess.run(argv, timeout=timeout, capture_output=True, text=True)
-            # surface key warnings from bb-run preflight
-            for ln in (r.stdout or "").splitlines():
-                if "WARNING:" in ln or "HINT:" in ln:
-                    self.log(f"    {ln.strip()}")
-            return r.returncode
+            environment = os.environ.copy()
+            if hasattr(self, 'context_file'):
+                environment['BB_CONTEXT_FILE'] = str(self.context_file.resolve())
+            process = subprocess.Popen(argv, env=environment, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, start_new_session=True)
+            deadline = time.monotonic() + (timeout or self.wf_timeout)
+            try:
+                while process.poll() is None:
+                    if getattr(self, 'current_task', None):
+                        self.recovery.heartbeat(self.current_task)
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    time.sleep(0.1)
+                return process.returncode
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
         except subprocess.TimeoutExpired:
             self.log(f"    TIMEOUT after {timeout}s: {label}")
             return 124
@@ -280,7 +314,17 @@ class Campaign:
         remaining = max(5, int(self.budget_left()))
         timeout = min(self.wf_timeout, remaining)
         self.log(f"RUN  {skill}/{workflow}  (tier-ok, timeout {timeout}s)")
+        task = skill + '/' + workflow
+        package = Path('.claude/skills') / skill / 'skill.yaml'
+        workflow_digest = hashlib.sha256(package.read_bytes()).hexdigest()
+        if not self.dry and not self.recovery.claim(task, workflow_digest):
+            self.completed.add((skill, workflow))
+            return
+        self.current_task = task if not self.dry else None
         code = self.run_cmd(["bin/bb-run", skill, workflow], f"{skill}/{workflow}", timeout=timeout)
+        if not self.dry:
+            self.recovery.finish(task, code)
+        self.current_task = None
         rec = {"skill": skill, "workflow": workflow, "exit_code": code, "at": now_iso(),
                "elapsed_s": int(self.elapsed())}
         self.results.append(rec)
@@ -352,20 +396,16 @@ class Campaign:
             self.write_status("execute", {"current_skill": skill})
 
     def phase_report(self):
-        self.log("=== PHASE: reporting + readiness (always runs) ===")
-        self.fsm_transition("report", note="report phase start (ignores budget)")
+        self.log("=== PHASE: reporting + readiness ===")
+        self.fsm_transition("report", note="report phase start")
         self.write_status("report")
         
-        # reporting + impact verification are best-effort
+        # Reporting follows the same leases and budget as every other workflow.
         for skill, wf in [("reporting", "batch-generate"),
                           ("impact-verifier", "collect-candidates"),
                           ("impact-verifier", "report-readiness")]:
             if (Path(".claude/skills") / skill / "skill.yaml").is_file():
-                # report phase ignores budget (small, terminal)
-                code = self.run_cmd(["bin/bb-run", skill, wf], f"{skill}/{wf}",
-                                    timeout=self.wf_timeout)
-                self.results.append({"skill": skill, "workflow": wf, "exit_code": code,
-                                     "at": now_iso(), "elapsed_s": int(self.elapsed())})
+                self.run_workflow(skill, wf)
 
     # ---- orchestration ----
     def init_context(self):
@@ -381,12 +421,12 @@ class Campaign:
             argv += ["--port", str(a.port)]
         self.log(f"init: {' '.join(argv)}")
         if not self.dry:
-            r = subprocess.run(argv, capture_output=True, text=True)
+            r = subprocess.run(argv, capture_output=True, text=True, env={**os.environ, 'BB_CONTEXT_DIR': str((self.dir / 'bootstrap').resolve())})
             if r.returncode != 0:
                 sys.exit(f"ERROR: bb-init failed:\n{r.stdout}\n{r.stderr}")
         # bb-validate (non-fatal)
         if not self.dry:
-            subprocess.run(["bin/bb-validate"], capture_output=True, text=True)
+            subprocess.run(['bin/bb-validate'], capture_output=True, text=True, env={**os.environ, 'BB_CONTEXT_FILE': str((self.dir / 'bootstrap/context.env').resolve())})
 
     def hunt(self):
         a = self.args
@@ -409,48 +449,59 @@ class Campaign:
                  f"| budget={self.budget}s | scope={'yes' if scope_ok else 'no'} "
                  f"| {'RESUME' if a.resume else 'NEW'}{' | DRY-RUN' if self.dry else ''}")
 
-        if not a.no_init and not a.resume:
-            self.init_context()
-
-        ctx = load_context()
-        outdir = ctx.get("outdir") or os.environ.get("OUTDIR") or "."
-        self.log(f"outdir={outdir}")
-
-        # set rate limit override into context.env if requested
-        if a.rate_limit and not self.dry:
-            self._patch_context_env("RATE_LIMIT", str(a.rate_limit))
-
+        terminal, outdir = 'failed', ''
         try:
+            if not a.no_init and not a.resume:
+                self.init_context()
+
+            snapshot = self.dir / 'context.snapshot.json'
+            ctx = json.loads(snapshot.read_text())['context'] if a.resume and snapshot.exists() else json.loads((self.dir / 'bootstrap/context.json').read_text()) if (self.dir / 'bootstrap/context.json').exists() else load_context()
+            if ctx.get('target_host') and ctx['target_host'] != getattr(a, 'init_domain', a.target):
+                raise ValueError('Selected context target does not match campaign target')
+            if a.program and ctx.get('program') and a.program != ctx['program']:
+                raise ValueError('Selected context program does not match campaign program')
+            scope_path = Path(a.scope_file or ctx.get('scope_file') or '')
+            scope_digest = hashlib.sha256(scope_path.read_bytes()).hexdigest() if scope_path.is_file() else ''
+            if not a.resume:
+                ctx = {k: v for k, v in ctx.items() if k.lower() not in ('auth_header', 'cookie_jar')}
+                ctx['outdir'] = str((self.dir / 'output').resolve())
+                ctx['evidence_dir'] = str((self.dir / 'output/evidence').resolve())
+            ctx = self.recovery.bind(ctx, a.target, a.program or ctx.get('program', ''), scope_digest,
+                                     hash_value({'max_tier': self.max_tier, 'rate_limit': a.rate_limit}), resume=bool(a.resume))
+            outdir = ctx['outdir']
+            self.context_file = self.dir / ('context-' + self.recovery.owner + '.env')
+            values = {k.upper(): str(v) for k, v in ctx.items() if isinstance(v, (str, int))}
+            values['OUTDIR'] = outdir
+            values['EVIDENCE_DIR'] = str(Path(outdir) / 'evidence')
+            values['COOKIE_JAR'] = str((self.dir / ('cookies-' + self.recovery.owner + '.txt')).resolve())
+            if a.rate_limit:
+                values['RATE_LIMIT'] = str(int(a.rate_limit))
+            self.context_file.write_text(''.join('export ' + k + '=' + shlex.quote(v) + '\n' for k, v in values.items()
+                                               if re.fullmatch('[A-Z_][A-Z_0-9]*', k)))
+            self.context_file.chmod(0o600)
             self.phase_backbone()
             if not self.over_budget():
                 self.phase_execute(outdir)
-            self.phase_report()
+            if not self.over_budget():
+                self.phase_report()
+            terminal = 'interrupted' if self.over_budget() else 'failed' if any(r['exit_code'] != 0 for r in self.results) else 'done'
+        except KeyboardInterrupt:
+            terminal = 'interrupted'
+            raise
         finally:
-            self.fsm_transition("done", note="campaign terminal state")
-            final = self.write_status("done")
-            self.log(f"=== CAMPAIGN COMPLETE === ran={final['workflows_run']} "
+            self.fsm_transition(terminal, note="campaign terminal state")
+            final = self.write_status(terminal)
+            self.log(f"=== CAMPAIGN {terminal.upper()} === ran={final['workflows_run']} "
                      f"ok={final['workflows_ok']} failed={final['workflows_failed']} "
                      f"elapsed={final['elapsed_s']}s")
             self.log(f"State: {self.dir}/  (status.json, campaign.log, results.jsonl)")
             self.log(f"Findings/evidence under: {outdir}")
             if self.log_fh:
                 self.log_fh.close()
+            self.results_fh.close()
+            self.recovery.db.close()
+            self.lock_fh.close()
 
-    def _patch_context_env(self, key, value):
-        p = Path(".bb/context.env")
-        if not p.is_file():
-            return
-        lines = p.read_text().splitlines()
-        out, found = [], False
-        for ln in lines:
-            if ln.startswith(key + "="):
-                out.append(f"{key}={value}"); found = True
-            else:
-                out.append(ln)
-        if not found:
-            # insert before the export PATH line if present
-            out.insert(0, f"{key}={value}")
-        p.write_text("\n".join(out) + "\n")
 
 
 def cmd_status(args):
@@ -493,11 +544,24 @@ def build_parser():
 
     s = sub.add_parser("status", help="Show latest (or named) campaign status.")
     s.add_argument("--campaign", default="", help="Campaign id (default: most recent).")
+    reconcile = sub.add_parser('reconcile', help='Operator: record an interrupted task outcome without retrying it')
+    reconcile.add_argument('--campaign', required=True)
+    reconcile.add_argument('--task', required=True)
+    reconcile.add_argument('--outcome', required=True, choices=['succeeded', 'failed'])
     return p
 
 
 def main():
     args = build_parser().parse_args()
+    if args.cmd == 'reconcile':
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+', args.campaign):
+            raise ValueError('Invalid campaign ID')
+        recovery = Recovery(CAMPAIGN_ROOT / args.campaign)
+        try:
+            recovery.reconcile(args.task, args.outcome == 'succeeded')
+        finally:
+            recovery.db.close()
+        return
     if args.cmd == "status":
         return cmd_status(args)
     if args.cmd == "hunt":

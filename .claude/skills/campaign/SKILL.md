@@ -52,3 +52,6 @@ The engine's safety ceiling, time budget, skill subset, and rate limit are all c
 - Backbone skills: `recon`, `domain-model`, `technique-kb`, `planner`
 - Triage/report: `impact-verifier`, `reporting`, `vuln-intel`, `osint`
 - Source of truth for workflows: `skill.yaml`
+
+## Durable context and recovery
+New campaigns own context.snapshot.json, output directories and execution.sqlite. Resume validates target/program/scope/policy identity and reads the snapshot rather than global context. Only completed execution records are skipped as successful; expired/failed tasks require operator reconciliation and never automatically retry. Use `campaign_runner.py reconcile --help` after reviewing artifacts. Cookies and generated context files belong to the current runner. Set BB_DATA_ROOT to an absolute private directory outside the repository to select private campaign storage. See docs/phase3-memory.md for migration, heartbeat/lease behavior and limits. Recovery does not grant authorization for active testing.

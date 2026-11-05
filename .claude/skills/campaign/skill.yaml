@@ -1,5 +1,5 @@
 name: campaign
-version: 1.0.0
+version: 2.0.0
 description: Autonomous end-to-end campaign orchestrator — recon, domain modeling, planning, priority-ordered multi-skill execution, and reporting from a single target, bounded by a time budget.
 bounded_context: CampaignContext
 safety_tier: active-safe

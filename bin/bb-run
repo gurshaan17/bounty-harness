@@ -98,12 +98,13 @@ if [ ! -f "${SCRIPT_DIR}/skill.yaml" ]; then
 fi
 
 # Source context and export it so preflight helpers see the same RunContext.
-if [ -f "$REPO_ROOT/.bb/context.env" ]; then
+CONTEXT_FILE="${BB_CONTEXT_FILE:-$REPO_ROOT/.bb/context.env}"
+if [ -f "$CONTEXT_FILE" ]; then
   set -a
   # Runtime-generated env file; intentionally not a static source target
   # shellcheck source=/dev/null
   # shellcheck source=/dev/null
-  source "$REPO_ROOT/.bb/context.env"
+  source "$CONTEXT_FILE"
   set +a
   export PATH="$HOME/.pdtm/go/bin:$HOME/go/bin:$PATH"
 else
