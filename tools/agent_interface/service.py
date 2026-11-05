@@ -116,6 +116,105 @@ class Service:
         spec.loader.exec_module(module)
         return module, module.ResearchStore(self.memory_path)
 
+    def planning(self, params, operation, operator=False):
+        import importlib.util
+
+        definitions = {
+            "plan.generate": ({"session_id"}, {"proposals", "weights"}),
+            "plan.get": ({"session_id", "plan_id"}, set()),
+            "queue.list": ({"session_id"}, set()),
+            "queue.history": ({"session_id", "task_id"}, set()),
+            "queue.transition": ({"session_id", "task_id", "expected_revision", "state", "reason"}, set()),
+            "queue.claim": ({"session_id", "task_id", "expected_revision"}, {"ttl"}),
+            "queue.heartbeat": ({"session_id", "task_id", "expected_revision", "lease_token"}, {"ttl"}),
+            "queue.dependencies": ({"session_id", "task_id", "expected_revision", "dependencies", "reason"}, set()),
+            "queue.stop": ({"session_id", "task_id", "expected_revision", "lease_token", "state", "reason"}, set()),
+            "queue.complete": ({"session_id", "task_id", "expected_revision", "lease_token", "result", "verdict"}, set()),
+            "campaign.evaluate": ({"session_id"}, set()),
+            "operator.adjust": ({"session_id", "task_id", "expected_revision", "position", "deferred", "reason"}, set()),
+            "operator.dispose": ({"session_id", "task_id", "expected_revision", "reason"}, set()),
+        }
+        required, optional = definitions[operation]
+        if not isinstance(params, dict) or not required <= params.keys() or params.keys() - required - optional:
+            raise InterfaceError("invalid_input", "Unknown or missing planning fields")
+        if operation == "plan.generate" and "proposals" in params:
+            schema = json.loads((self.root / "tools/schemas/research-opportunity.schema.json").read_text())
+            if not isinstance(params["proposals"], list):
+                raise InterfaceError("invalid_input", "Proposals must be an array")
+            for proposal in params["proposals"]:
+                validate(proposal, schema)
+        if operation.startswith("operator.") and not operator:
+            raise InterfaceError("scope_denial", "Operator transport required")
+        properties = {k: ID for k in ("session_id", "task_id", "plan_id", "lease_token")}
+        properties.update({k: {"type": "integer", "minimum": 1} for k in ("expected_revision", "ttl")})
+        properties.update({k: {"type": "string", "minLength": 1, "maxLength": 8192} for k in ("state", "reason", "result", "verdict")})
+        properties.update(
+            proposals={"type": "array", "maxItems": 100, "items": {"type": "object"}},
+            weights={"type": "object"},
+            position={"type": "integer", "minimum": 0},
+            deferred={"type": "boolean"},
+            dependencies={"type": "array", "maxItems": 32, "items": ID},
+        )
+        validate(params, {"type": "object", "additionalProperties": False, "required": list(required), "properties": {k: properties[k] for k in required | optional}})
+        session = self.session(params["session_id"])
+        context = self.context(session["program_id"], session["campaign_id"])
+        if session["context_revision"] != context["context_revision"]:
+            raise InterfaceError("context_conflict", "Session context is stale")
+        module, store = self.memory()
+        path = self.root / ".claude/skills/planner/scripts/research_planner.py"
+        spec = importlib.util.spec_from_file_location("bh_planning", path)
+        planning = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(planning)
+        provenance = {
+            "actor": self.principal,
+            "session_id": session["session_id"],
+            "campaign_id": session["campaign_id"],
+            "provider": session["provider"],
+            "client_version": session["client_version"],
+            **{k: context[k] for k in ("context_revision", "scope_digest", "policy_digest")},
+        }
+        planner = planning.Planner(store, session["program_id"], session["campaign_id"], provenance, catalog(self.root)["workflows"] if operation == "plan.generate" else ())
+        try:
+            if operation == "plan.generate":
+                return planner.generate(params.get("proposals"), params.get("weights"))
+            if operation == "plan.get":
+                return planner.plan(params["plan_id"])
+            if operation == "queue.list":
+                return {"tasks": planner.listing()}
+            if operation == "queue.history":
+                return {"events": planner.history(params["task_id"])}
+            if operation == "queue.transition":
+                return planner.transition(params["task_id"], params["expected_revision"], params["state"], params["reason"])
+            if operation == "queue.claim":
+                return planner.claim(params["task_id"], params["expected_revision"], params.get("ttl", 30))
+            if operation == "queue.heartbeat":
+                return planner.heartbeat(params["task_id"], params["expected_revision"], params["lease_token"], params.get("ttl", 30))
+            if operation == "queue.dependencies":
+                return planner.dependencies(params["task_id"], params["expected_revision"], params["dependencies"], params["reason"])
+            if operation == "queue.stop":
+                return planner.stop(params["task_id"], params["expected_revision"], params["lease_token"], params["state"], params["reason"])
+            if operation == "queue.complete":
+                return planner.complete(params["task_id"], params["expected_revision"], params["lease_token"], params["result"], params["verdict"])
+            if operation == "operator.adjust":
+                return planner.adjust(params["task_id"], params["expected_revision"], params["position"], params["deferred"], params["reason"])
+            if operation == "operator.dispose":
+                return planner.dispose(params["task_id"], params["expected_revision"], params["reason"])
+            path = self.root / ".claude/skills/campaign/scripts/completion_gate.py"
+            spec = importlib.util.spec_from_file_location("bh_completion", path)
+            gate = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(gate)
+            planner.listing()
+            with store.db:
+                store.db.execute("BEGIN")
+                assessment = gate.evaluate(store, session["program_id"], session["campaign_id"], planner.rows())
+            return assessment
+        except planning.PlanningConflict:
+            raise InterfaceError("context_conflict", "Queue revision or research inputs changed") from None
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise InterfaceError("invalid_input", "Invalid planning input, stale revision, or unavailable operation") from None
+        finally:
+            store.db.close()
+
     def handoff(self, session):
         self.recover_expired()
         context = self.context(session["program_id"], session["campaign_id"])
@@ -128,10 +227,12 @@ class Service:
             research = store.summary(session["program_id"])
         finally:
             store.db.close()
+        queue = self.planning({"session_id": session["session_id"]}, "queue.list")["tasks"] if session["context_revision"] == context["context_revision"] else []
         return {
             "schema_version": "1.0",
             "context": context,
             "session_id": session["session_id"],
+            "research_queue": {"tasks": queue[:20], "total": len(queue), "truncated_to": 20},
             "sensitivity": "internal",
             "trust": "derived",
             "source_ids": [t["task_id"] for t in tasks],
@@ -265,6 +366,20 @@ class Service:
         if op in ("capabilities", "discover"):
             fields(params, [])
             return capabilities() if op == "capabilities" else catalog(self.root)
+        if op in (
+            "plan.generate",
+            "plan.get",
+            "queue.list",
+            "queue.history",
+            "queue.transition",
+            "queue.claim",
+            "queue.heartbeat",
+            "queue.complete",
+            "queue.stop",
+            "queue.dependencies",
+            "campaign.evaluate",
+        ):
+            return self.planning(params, op)
         if op == "session.open":
             return self.open_session(params)
         if op in ("session.resume", "session.handoff"):

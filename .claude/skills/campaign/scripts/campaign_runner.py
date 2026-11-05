@@ -229,7 +229,7 @@ class Campaign:
         status = {
             "campaign_id": self.campaign_id,
             "target": self.args.target,
-            "program": getattr(self.args, "program", None),
+            "program": getattr(self, "program_id", getattr(self.args, "program", None)),
             "max_tier": self.max_tier,
             "time_budget_s": self.budget,
             "elapsed_s": int(self.elapsed()),
@@ -247,7 +247,7 @@ class Campaign:
 
     # Explicit FSM: RECON->PLAN->EXECUTE->VERIFY->REPORT persisted so external
     # tooling and resumed runs read deterministic phase transitions.
-    FSM_PHASES = ["init", "backbone", "execute", "report", "done"]
+    FSM_PHASES = ["init", "backbone", "execute", "report", "completed", "blocked", "budget_exhausted", "operator_stopped", "previewed"]
 
     def fsm_transition(self, new_phase, note=""):
         state_path = self.dir / "state.json" if self.dir else None
@@ -309,9 +309,10 @@ class Campaign:
         if (skill, workflow) in self.completed:
             self.log(f"SKIP (already done): {skill}/{workflow}")
             return
+        self.expect_workflow(skill, workflow)
         if self.over_budget():
             return
-        remaining = max(5, int(self.budget_left()))
+        remaining = max(1, int(self.budget_left()))
         timeout = min(self.wf_timeout, remaining)
         self.log(f"RUN  {skill}/{workflow}  (tier-ok, timeout {timeout}s)")
         task = skill + '/' + workflow
@@ -337,6 +338,44 @@ class Campaign:
         else:
             self.log(f"  FAIL(exit {code}) {skill}/{workflow} — continuing")
 
+    def expect_workflow(self, skill, workflow):
+        import yaml
+        package = Path('.claude/skills') / skill / 'skill.yaml'
+        data = yaml.safe_load(package.read_text())
+        outputs = data['workflows'][workflow].get('outputs', [])
+        outdir = getattr(self, 'output_root', '')
+        resolved = [value.replace('${OUTDIR}', outdir).replace('$OUTDIR', outdir) if isinstance(value, str) else '<unresolved output descriptor>' for value in outputs]
+        self.recovery.expect('workflow:' + skill + '/' + workflow, {'outputs': resolved})
+
+    def assess_completion(self, program, stop_reason=None):
+        import importlib.util
+        memory_path = CAMPAIGN_ROOT.parent / 'memory.sqlite'
+        obligations = self.recovery.completion()
+        assessment = {'obligations': [], 'status': 'completed'}
+        root = Path(__file__).resolve().parents[4]
+        def load(name, relative):
+            spec = importlib.util.spec_from_file_location(name, root / relative)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        if memory_path.is_file():
+            memory = load('campaign_memory', '.claude/skills/program-memory/scripts/research_store.py')
+            planning = load('campaign_planning', '.claude/skills/planner/scripts/research_planner.py')
+            store = memory.ResearchStore(memory_path)
+            try:
+                planner = planning.Planner(store, program, self.campaign_id, {'actor': 'campaign-runner'})
+                tasks = planner.listing()
+                gate = load('campaign_completion', '.claude/skills/campaign/scripts/completion_gate.py')
+                assessment = gate.evaluate(store, program, self.campaign_id, tasks)
+            finally:
+                store.db.close()
+        obligations += assessment['obligations']
+        status = 'operator_stopped' if stop_reason else 'budget_exhausted' if self.over_budget() else 'previewed' if self.dry else 'blocked' if obligations else 'completed'
+        result = {'status': status, 'can_complete': status == 'completed', 'obligations': obligations,
+                  'stop_reason': stop_reason, 'grants_execution': False, 'submission_approved': False}
+        atomic_json(self.dir / 'completion.json', result)
+        return result
+
     def tier_ok(self, tier):
         return TIERS.get(tier, 1) <= TIERS.get(self.max_tier, 1)
 
@@ -345,6 +384,10 @@ class Campaign:
         self.log("=== PHASE: recon + domain model + plan ===")
         self.fsm_transition("backbone", note="recon+model+plan phase start")
         self.write_status("backbone")
+        plan_wf = "generate-plan-safe" if self.max_tier == "passive" else "generate-plan"
+        for skill, wf, tier in BACKBONE + [("planner", plan_wf, ""), ("planner", "visualize-plan", "")]:
+            if not tier or self.tier_ok(tier):
+                self.expect_workflow(skill, wf)
         for skill, wf, min_tier in BACKBONE:
             if self.over_budget():
                 self.log("Time budget exhausted during backbone."); return
@@ -358,6 +401,8 @@ class Campaign:
         plan_wf = "generate-plan-safe" if self.max_tier == "passive" else "generate-plan"
         self.run_workflow("planner", plan_wf)
         self.run_workflow("planner", "visualize-plan")
+        if not self.over_budget():
+            self.recovery.satisfy("phase:backbone")
 
     def phase_execute(self, outdir):
         self.log("=== PHASE: execute vulnerability skills (priority order) ===")
@@ -378,6 +423,11 @@ class Campaign:
             self.log(f"Restricted by --skills to: {', '.join(order)}")
 
         for skill in order:
+            if skill not in EXECUTE_SKILL_DENYLIST:
+                for name, tier in list_workflows(skill):
+                    if self.tier_ok(tier):
+                        self.expect_workflow(skill, name)
+        for skill in order:
             if self.over_budget():
                 self.log("Time budget exhausted; stopping execute phase."); break
             if skill in EXECUTE_SKILL_DENYLIST:
@@ -394,6 +444,8 @@ class Campaign:
                     break
                 self.run_workflow(skill, name)
             self.write_status("execute", {"current_skill": skill})
+        if not self.over_budget():
+            self.recovery.satisfy("phase:execute")
 
     def phase_report(self):
         self.log("=== PHASE: reporting + readiness ===")
@@ -406,6 +458,8 @@ class Campaign:
                           ("impact-verifier", "report-readiness")]:
             if (Path(".claude/skills") / skill / "skill.yaml").is_file():
                 self.run_workflow(skill, wf)
+        if not self.over_budget():
+            self.recovery.satisfy("phase:report")
 
     # ---- orchestration ----
     def init_context(self):
@@ -469,6 +523,10 @@ class Campaign:
             ctx = self.recovery.bind(ctx, a.target, a.program or ctx.get('program', ''), scope_digest,
                                      hash_value({'max_tier': self.max_tier, 'rate_limit': a.rate_limit}), resume=bool(a.resume))
             outdir = ctx['outdir']
+            self.output_root = outdir
+            self.program_id = a.program or ctx.get('program', '')
+            for phase in ('backbone', 'execute', 'report'):
+                self.recovery.expect('phase:' + phase, {})
             self.context_file = self.dir / ('context-' + self.recovery.owner + '.env')
             values = {k.upper(): str(v) for k, v in ctx.items() if isinstance(v, (str, int))}
             values['OUTDIR'] = outdir
@@ -484,13 +542,15 @@ class Campaign:
                 self.phase_execute(outdir)
             if not self.over_budget():
                 self.phase_report()
-            terminal = 'interrupted' if self.over_budget() else 'failed' if any(r['exit_code'] != 0 for r in self.results) else 'done'
+            completion = self.assess_completion(a.program or ctx.get('program', ''))
+            terminal = completion['status']
         except KeyboardInterrupt:
-            terminal = 'interrupted'
+            completion = self.assess_completion(getattr(self, 'program_id', a.program or ''), stop_reason='Operator interrupt')
+            terminal = completion['status']
             raise
         finally:
             self.fsm_transition(terminal, note="campaign terminal state")
-            final = self.write_status(terminal)
+            final = self.write_status(terminal, {"completion": completion} if "completion" in locals() else None)
             self.log(f"=== CAMPAIGN {terminal.upper()} === ran={final['workflows_run']} "
                      f"ok={final['workflows_ok']} failed={final['workflows_failed']} "
                      f"elapsed={final['elapsed_s']}s")

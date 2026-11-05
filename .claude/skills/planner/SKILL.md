@@ -20,7 +20,7 @@ Trigger phrases:
 - "create a test plan", "generate a plan", "ranked plan", "what should I test", "prioritize my testing", "plan my engagement", "coverage-based plan"
 - "plan", "planning", "test strategy", "engagement plan", "plan vs results"
 
-**Prerequisite:** The planner requires a domain profile. If the target has no prior recon, run the `recon` skill first, then the `domain-model` skill to generate a domain profile, then use the planner.
+**Prerequisite for legacy technique ranking:** The planner requires a domain profile. If the target has no prior recon, run the `recon` skill first, then the `domain-model` skill to generate a domain profile, then use the planner.
 
 ## Decision Tree
 
@@ -37,6 +37,7 @@ User provides target + wants a plan
 ```
 
 ## Workflow Selection
+- For memory-first application research and durable questions, use `research-plan` with an existing `bb-agent` session; read [Phase 4 operations](../../../docs/phase4-planning.md) for queue transitions, leases, negative-result suppression and completion checks. `RESEARCH_REQUEST` supplies a `plan.generate` JSON request. This path does not require a domain profile or technique sweep and never grants active execution.
 - Start with `generate-plan` for the full plan.
 - Use `generate-plan-safe` if you only want safe, non-destructive items.
 - Follow with `visualize-plan` and `validate-plan` to review before execution.
@@ -46,6 +47,7 @@ User provides target + wants a plan
 
 | Workflow | Purpose | Script paths | Primary outputs |
 |---|---|---|---|
+| `research-plan` | Generate memory-first questions and persist a revision-bound queue | `.claude/skills/planner/scripts/research_workflow.py` | Research JSON and Markdown |
 | `generate-plan` | Generate full ranked test plan from domain profile + techniques + coverage | `.claude/skills/planner/scripts/generate_plan.py` | Plan JSON file |
 | `generate-plan-safe` | Generate plan excluding intrusive and destructive techniques | `.claude/skills/planner/scripts/generate_plan.py` | Plan JSON file |
 | `visualize-plan` | Convert plan JSON to readable markdown or HTML | `.claude/skills/planner/scripts/plan_visualizer.py` | Markdown or HTML file |

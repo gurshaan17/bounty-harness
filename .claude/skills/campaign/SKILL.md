@@ -18,6 +18,7 @@ This is the entry point for "here's a URL — go find everything you can." The d
 Safety ceiling defaults to `intrusive` but is **auto-capped to `active-safe` unless a non-empty `--scope-file` is supplied** — intrusive blackbox testing only runs against targets you have authorization for. Credentials, cookies, tokens, and target responses are kept local-only, are never committed (the `.bb/` and `output/` trees are gitignored), and must be redacted/sanitized before any report leaves the machine.
 
 ## Workflow Selection
+- For durable research queue completion, use `bb-agent` `campaign.evaluate`; see [Phase 4 planning](../../../docs/phase4-planning.md). A model completion claim cannot resolve pending tasks, hypotheses, reviews or expected outputs. Runner terminal states distinguish completed, blocked, budget-exhausted and operator-stopped work; unfinished obligations persist in completion.json. These checks do not establish a production execution boundary.
 - New target, no prior recon, "find all vulns", "run for a while", a bare URL → start here with `bin/bb-hunt`.
 - Authorization confirmed / scope file in hand and you want active+intrusive blackbox coverage → `--scope-file <auth> --max-tier intrusive`.
 - Context already initialized for the target → `bin/bb-run campaign hunt` (or `hunt-intrusive`).

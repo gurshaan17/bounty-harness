@@ -23,6 +23,15 @@ def main():
     register.add_argument("--program-id", required=True)
     register.add_argument("--campaign-id", required=True)
     register.add_argument("--scope-file", required=True, type=Path)
+    for command in ("queue-adjust", "queue-dispose"):
+        control = sub.add_parser(command, help="Operator: reorder/defer or dispose research work without granting execution/review")
+        control.add_argument("--session-id", required=True)
+        control.add_argument("--task-id", required=True)
+        control.add_argument("--expected-revision", required=True, type=int)
+        control.add_argument("--reason", required=True)
+        if command == "queue-adjust":
+            control.add_argument("--position", required=True, type=int)
+            control.add_argument("--deferred", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
     if args.data_root:
         if not args.data_root.is_absolute() or args.data_root.resolve().is_relative_to(ROOT):
@@ -39,7 +48,12 @@ def main():
                 print(json.dumps(capabilities() if request["operation"] == "capabilities" else catalog(), sort_keys=True))
                 return 0
         service = Service(args.database, f"uid:{os.getuid()}")
-        if args.command == "register":
+        if args.command in ("queue-adjust", "queue-dispose"):
+            params = {"session_id": args.session_id, "task_id": args.task_id, "expected_revision": args.expected_revision, "reason": args.reason}
+            if args.command == "queue-adjust":
+                params.update(position=args.position, deferred=args.deferred)
+            result = service.planning(params, "operator.adjust" if args.command == "queue-adjust" else "operator.dispose", operator=True)
+        elif args.command == "register":
             scope = args.scope_file.read_bytes()
             if not scope.strip() or len(scope) > MAX_MESSAGE:
                 raise InterfaceError("invalid_input", "Scope snapshot must be nonempty and at most 64 KiB")

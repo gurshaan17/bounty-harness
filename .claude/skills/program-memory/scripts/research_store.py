@@ -45,6 +45,8 @@ def backup(source, destination):
 
 
 class ResearchStore:
+    validate_payload = staticmethod(scan)
+
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -54,10 +56,10 @@ class ResearchStore:
             with closing(sqlite3.connect(path)) as existing:
                 tables = {r[0] for r in existing.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 version = existing.execute('SELECT max(version) FROM memory_schema').fetchone()[0] if 'memory_schema' in tables else 0
-                if (version or 0) > 2:
+                if (version or 0) > 3:
                     raise ValueError('Unsupported memory schema')
-            if (version or 0) < 2:
-                backup(path, self.path.with_name(self.path.name + '.pre-v2-' + uuid.uuid4().hex + '.sqlite'))
+            if (version or 0) < 3:
+                backup(path, self.path.with_name(self.path.name + '.pre-v3-' + uuid.uuid4().hex + '.sqlite'))
         legacy.init_memory('migration', str(path))
         self.db = sqlite3.connect(path, timeout=10)
         self.db.row_factory = sqlite3.Row
@@ -66,7 +68,7 @@ class ResearchStore:
         try:
             self.db.execute('CREATE TABLE IF NOT EXISTS memory_schema(version INTEGER PRIMARY KEY)')
             version = self.db.execute('SELECT max(version) FROM memory_schema').fetchone()[0] or 0
-            if version > 2:
+            if version > 3:
                 raise ValueError('Unsupported memory schema')
             if version == 0:
                 self.db.execute('CREATE TABLE research_events(id TEXT PRIMARY KEY, program TEXT, entity TEXT, revision INTEGER, data TEXT, UNIQUE(program,entity,revision))')
@@ -85,6 +87,14 @@ class ResearchStore:
                         self.db.execute(f"CREATE TRIGGER IF NOT EXISTS protect_{table}_{operation} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable migrated history'); END")
                 self.db.execute("CREATE TRIGGER IF NOT EXISTS protect_facts_INSERT BEFORE INSERT ON facts BEGIN SELECT RAISE(ABORT, 'use migrated research API'); END")
                 self.db.execute('INSERT INTO memory_schema VALUES(2)')
+            if version < 3:
+                self.db.execute('CREATE TABLE research_plans(program TEXT, campaign TEXT, id TEXT, data TEXT, PRIMARY KEY(program,campaign,id))')
+                self.db.execute('CREATE TABLE research_queue(program TEXT, campaign TEXT, id TEXT, revision INTEGER, data TEXT, PRIMARY KEY(program,campaign,id))')
+                self.db.execute('CREATE TABLE queue_events(id TEXT PRIMARY KEY, program TEXT, campaign TEXT, task TEXT, revision INTEGER, data TEXT)')
+                for table in ('queue_events', 'research_plans'):
+                    for operation in ('UPDATE', 'DELETE'):
+                        self.db.execute(f"CREATE TRIGGER protect_{table}_{operation} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable planning history'); END")
+                self.db.execute('INSERT INTO memory_schema VALUES(3)')
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -103,7 +113,7 @@ class ResearchStore:
                         (program, record['id'], record['revision'], json.dumps(record)))
         return record
 
-    def append(self, program, record, provenance):
+    def _prepare(self, program, record, provenance):
         scan(program)
         scan(record)
         scan(provenance)
@@ -168,8 +178,34 @@ class ResearchStore:
         record = {**record, 'id': str(uuid.uuid4()), 'revision': 1, 'trust': 'agent-unreviewed',
                   'sensitivity': sensitivity, 'source_revisions': source_revisions, 'confidence': record.get('confidence', 'medium'),
                   'basis': record.get('basis', 'inference'), 'sources': sources}
+        return record
+
+    def append_in_transaction(self, program, record, provenance, reason=''):
+        if not self.db.in_transaction:
+            raise ValueError('Research batch requires an existing transaction')
+        record = self._prepare(program, record, provenance)
+        return self._write(program, record, provenance, 'append', reason)
+
+    def append(self, program, record, provenance):
         with self.db:
-            return self._write(program, record, provenance, 'append', '')
+            self.db.execute('BEGIN IMMEDIATE')
+            return self.append_in_transaction(program, record, provenance)
+
+    def snapshot(self, program):
+        # Call inside the planner's transaction to pin a consistent research snapshot.
+        import hashlib
+        revisions, records = {}, []
+        for row in self.db.execute('SELECT id,revision,data FROM research_entities WHERE program=? ORDER BY id', (program,)):
+            revisions[row['id']] = row['revision']
+            record = json.loads(row['data'])
+            try:
+                scan(record)
+            except ValueError:
+                continue
+            if record.get('sensitivity') != 'high-sensitivity':
+                records.append(record)
+        fingerprint = hashlib.sha256(json.dumps(revisions, sort_keys=True).encode()).hexdigest()
+        return records, fingerprint
 
     def get(self, program, entity):
         row = self.db.execute('SELECT data FROM research_entities WHERE program=? AND id=?', (program, entity)).fetchone()

@@ -1,5 +1,5 @@
 name: planner
-version: 1.0.0
+version: 1.1.0
 description: "Domain-driven ranked test plan generator — consumes domain model, technique catalog, coverage ledger, and outputs a prioritized list of workflows with rationales, safety flags, and evidence requirements"
 bounded_context: PlanningContext
 safety_tier: passive
@@ -12,6 +12,26 @@ tools_required:
   - yq
 input_files: []
 workflows:
+  research-plan:
+    description: "Generate and persist memory-first research proposals and a readable offline review plan"
+    inputs: [OUTDIR, RESEARCH_REQUEST]
+    auth_required: false
+    side_effects: [local_state_write]
+    safety_tier: passive
+    command: |
+      python3 .claude/skills/planner/scripts/research_workflow.py \
+        --request "${RESEARCH_REQUEST:?Set RESEARCH_REQUEST to a plan.generate JSON request}" \
+        --output "$OUTDIR/planner/research-plan.json" \
+        --markdown "$OUTDIR/planner/research-plan.md"
+    outputs:
+      - $OUTDIR/planner/research-plan.json
+      - $OUTDIR/planner/research-plan.md
+    evidence_dir: $OUTDIR/planner
+    detection_signals:
+      - "plan contains source revisions, ranked boundary questions and durable queue IDs"
+    false_positives:
+      - "proposals and scores do not establish vulnerability validity or testing permission"
+
   generate-plan:
     description: "Load domain profile + technique catalog + coverage data and produce a ranked test plan"
     inputs: [OUTDIR]

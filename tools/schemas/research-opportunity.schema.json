@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Research opportunity proposal; scores and execution state are server-owned",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "question",
+    "hypothesis",
+    "surface",
+    "boundary",
+    "roles",
+    "potential_impact",
+    "supporting",
+    "contradicting",
+    "alternative_explanations",
+    "prerequisites",
+    "method",
+    "expected_artifacts",
+    "stop_condition",
+    "dependencies"
+  ],
+  "properties": {
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "surface": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "boundary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "potential_impact": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "stop_condition": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "roles": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "supporting": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "contradicting": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "alternative_explanations": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "prerequisites": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "expected_artifacts": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "method": {
+      "type": "object"
+    },
+    "hypothesis_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    }
+  }
+}
