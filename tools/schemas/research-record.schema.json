@@ -24,7 +24,8 @@
         "evidence",
         "question",
         "queue_task",
-        "decision"
+        "decision",
+        "technique_candidate"
       ]
     },
     "content": {

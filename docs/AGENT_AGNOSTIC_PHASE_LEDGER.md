@@ -25,3 +25,12 @@ General validator still reports the same three baseline failures (binary-analysi
 Limits belong to later phases: external execution isolation/approval enforcement, durable research planning queue, independent human review and report submission. External domain-store IDs are provenance references; evidence references require registered artifact ownership/hash agreement. Existing programs are not actively tested by this work. Native client limitations from Phase 2 remain recorded above.
 
 Commits: `5b2f14b` — offline agent contracts and governed research persistence; following commit `feat: make campaign context and recovery durable` — campaign snapshots, execution recovery and Phase 3 acceptance/ledger. Final lint: `ruff check tools/ bin/bb-tools-doctor.py` passed with ruff 0.17.3 installed only in the temporary validation environment. Final make test passed after formatting changes.
+
+
+## Phase 3 follow-up — task context and lesson candidates, 2026-11-05
+
+Checked the completed Phase 3 implementation against the new compatibility-plan additions. Added `research.context` through the existing provider-neutral service and memory skill: deterministic bounded provenance neighborhoods, counterevidence priority, omission accounting, revision pins, stale-source reporting and program/sensitivity isolation. Added structured `technique_candidate` records with applicability, pinned outcome/counterexample references, inherited sensitivity and unreviewed trust. Candidates cannot enter report-safe export or promote themselves; no shared technique/skill writer or approval operation was added. Existing stores need no migration.
+
+Scope: Phase 3 follow-up only. Campaign completion gates, reportability assessment and quality benchmarks remain Phase 4, 5 and 7 respectively. Promotion evaluation remains a future reviewed integration; candidate storage does not claim sanitized cross-program learning or validated success.
+
+Validation: `PATH=/tmp/bh-audit-venv/bin:$PATH make test` passed (38 behavioral tests plus package YAML/compile checks). Four new tests cover context counterevidence/order, omission and byte bounds, stale provenance, restricted/cross-program denial, provider switching, stale sessions and candidate self-promotion rejection. Ruff passed for changed interface modules; `git diff --check` passed. Skill validator retains the three documented baseline failures (binary-analysis, race-condition, sqli at 69/100); program-memory passes at 89/100, overall average 82/100. No target traffic or production dispatch was used.

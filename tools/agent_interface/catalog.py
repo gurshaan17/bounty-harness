@@ -82,6 +82,7 @@ def capabilities():
             "research.correct",
             "research.history",
             "research.summary",
+            "research.context",
             "research.contradictions",
             "research.export",
             "artifact.read",

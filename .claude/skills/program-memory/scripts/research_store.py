@@ -12,7 +12,7 @@ spec = importlib.util.spec_from_file_location('legacy_memory', Path(__file__).wi
 legacy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(legacy)
 KINDS = {'program', 'asset', 'component', 'technology', 'role', 'functionality', 'observation',
-         'hypothesis', 'investigation', 'negative_result', 'coverage', 'evidence', 'question', 'queue_task', 'decision'}
+         'hypothesis', 'investigation', 'negative_result', 'coverage', 'evidence', 'question', 'queue_task', 'decision', 'technique_candidate'}
 
 
 class RevisionConflict(ValueError):
@@ -123,6 +123,22 @@ class ResearchStore:
         for ref in refs:
             if not isinstance(ref, dict) or set(ref) != {'system', 'id'} or ref['system'] not in ('asset-graph', 'traffic-corpus', 'coverage') or not isinstance(ref['id'], str):
                 raise ValueError('External references must name a supported domain store and opaque ID')
+        if record['kind'] == 'technique_candidate':
+            lesson = record.get('details', {})
+            if not isinstance(lesson, dict) or set(lesson) != {'applicability', 'supporting_outcomes', 'counterexamples'}:
+                raise ValueError('Technique candidates require applicability, supporting outcomes and counterexamples')
+            if not isinstance(lesson['applicability'], str) or not lesson['applicability'].strip():
+                raise ValueError('Applicability conditions required')
+            for key in ('supporting_outcomes', 'counterexamples'):
+                refs = lesson[key]
+                if not isinstance(refs, list) or len(refs) > 32 or (key == 'supporting_outcomes' and not refs):
+                    raise ValueError('Invalid lesson outcome references')
+                for entity in refs:
+                    if not isinstance(entity, str) or entity not in record.get('sources', []):
+                        raise ValueError('Lesson outcomes must be pinned same-program sources')
+                    source = self.get(program, entity)
+                    if not source or source['kind'] not in ('investigation', 'negative_result'):
+                        raise ValueError('Lesson outcomes require investigations or negative results')
         expiry = record.get('expires_at')
         if expiry is not None:
             if not isinstance(expiry, str) or datetime.fromisoformat(expiry).tzinfo is None:
@@ -202,6 +218,68 @@ class ResearchStore:
                 break
         return results
 
+    def context_pack(self, program, entity_id, max_records=12, max_bytes=32768):
+        """Build a deterministic, read-snapshot view of a focus and its provenance neighborhood."""
+        if not isinstance(entity_id, str) or type(max_records) is not int or not 1 <= max_records <= 25 or type(max_bytes) is not int or not 2048 <= max_bytes <= 65536:
+            raise ValueError('Invalid context bounds')
+        self.db.execute('BEGIN')
+        try:
+            visible = {}
+            excluded = 0
+            for row in self.db.execute('SELECT data FROM research_entities WHERE program=? ORDER BY id', (program,)):
+                record = json.loads(row[0])
+                try:
+                    scan(record)
+                    if record.get('sensitivity') == 'high-sensitivity':
+                        raise ValueError('Restricted')
+                except ValueError:
+                    excluded += 1
+                    continue
+                visible[record['id']] = record
+            if entity_id not in visible:
+                raise ValueError('Unknown or inaccessible focus')
+            # Include sources recursively and direct dependents, including contradictory/negative work.
+            relevant = {entity_id}
+            pending = [entity_id]
+            while pending:
+                current = pending.pop()
+                neighbors = set(visible[current].get('sources', []))
+                neighbors.update(r['id'] for r in visible.values() if current in r.get('sources', []))
+                for neighbor in sorted(neighbors & visible.keys() - relevant):
+                    relevant.add(neighbor)
+                    pending.append(neighbor)
+            priority = {'negative_result': 0, 'investigation': 1, 'hypothesis': 2, 'question': 3}
+            ordered = [entity_id] + sorted(relevant - {entity_id}, key=lambda key: (priority.get(visible[key]['kind'], 4), key))
+            pack = {'trust': 'derived', 'scope_authority': False, 'focus_id': entity_id,
+                    'selection_rule': 'focus-first, transitive source/dependent neighborhood; negative results then investigations then hypotheses then questions then ID',
+                    'limits': {'max_records': max_records, 'max_bytes': max_bytes},
+                    'records': [], 'source_revisions': {}, 'stale_sources': [],
+                    'omitted': {'unrelated': len(visible) - len(relevant), 'restricted_or_unsafe': excluded, 'record_limit': 0, 'byte_limit': 0}}
+            for key in ordered:
+                record = visible[key]
+                if len(pack['records']) >= max_records:
+                    pack['omitted']['record_limit'] += 1
+                    continue
+                stale = [{'entity_id': key, 'source_id': source, 'expected_revision': revision,
+                          'current_revision': visible[source]['revision'] if source in visible else None}
+                         for source, revision in record.get('source_revisions', {}).items()
+                         if source not in visible or visible[source]['revision'] != revision]
+                candidate = {**pack, 'records': pack['records'] + [record],
+                             'source_revisions': {**pack['source_revisions'], key: record['revision']},
+                             'stale_sources': pack['stale_sources'] + stale}
+                # Reserve space for final omission counters as they grow.
+                if len(json.dumps(candidate, sort_keys=True).encode()) + 128 > max_bytes:
+                    if key == entity_id:
+                        raise ValueError('Focus exceeds context byte budget')
+                    pack['omitted']['byte_limit'] += 1
+                    continue
+                pack = candidate
+            rank = {'report-safe': 0, 'program-private': 1, 'high-sensitivity': 2}
+            pack['sensitivity'] = max((r['sensitivity'] for r in pack['records']), key=rank.get)
+            return pack
+        finally:
+            self.db.rollback()
+
     def summary(self, program):
         records = self.query(program)
         stamp = datetime.now(timezone.utc)
@@ -220,7 +298,7 @@ class ResearchStore:
         return pairs[:50]
 
     def export(self, program):
-        return [record for record in self.query(program) if record['sensitivity'] == 'report-safe']
+        return [record for record in self.query(program) if record['sensitivity'] == 'report-safe' and record['kind'] != 'technique_candidate']
 
 
 if __name__ == '__main__':

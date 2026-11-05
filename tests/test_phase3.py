@@ -264,3 +264,76 @@ class Phase3AcceptanceTests(unittest.TestCase):
         recovered = service.handle(dict(schema_version='1.0', operation='task.status', params={'session_id': session['session_id'], 'task_id': 't'}))
         self.assertEqual('interrupted', recovered['status'])
         self.assertEqual(recovered, service.submit(task))
+
+class Phase3ContextTests(unittest.TestCase):
+    setUp = Phase3Tests.setUp
+    store = Phase3Tests.store
+
+    def test_context_preserves_counterevidence_and_detects_stale_sources(self):
+        store = self.store()
+        fact = store.append('p', {'kind': 'observation', 'content': 'Fixture ownership boundary'}, {})
+        hypothesis = store.append('p', {'kind': 'hypothesis', 'content': 'Boundary may differ', 'sources': [fact['id']]}, {})
+        negative = store.append('p', {'kind': 'negative_result', 'content': 'Boundary held in fixture', 'sources': [hypothesis['id']]}, {})
+        for i in range(55):
+            store.append('p', {'kind': 'observation', 'content': f'Unrelated fixture {i}'}, {})
+        pack = store.context_pack('p', hypothesis['id'], max_records=2)
+        self.assertEqual([hypothesis['id'], negative['id']], [r['id'] for r in pack['records']])
+        self.assertEqual(55, pack['omitted']['unrelated'])
+        self.assertEqual(1, pack['omitted']['record_limit'])
+        self.assertEqual(pack, store.context_pack('p', hypothesis['id'], max_records=2))
+        store.correct('p', fact['id'], 1, 'Corrected boundary', 'fixture update', {})
+        stale = store.context_pack('p', hypothesis['id'])['stale_sources']
+        self.assertEqual([{'entity_id': hypothesis['id'], 'source_id': fact['id'], 'expected_revision': 1, 'current_revision': 2}], stale)
+        with self.assertRaises(ValueError):
+            store.context_pack('other', hypothesis['id'])
+
+    def test_context_byte_bounds_and_restricted_records(self):
+        store = self.store()
+        focus = store.append('p', {'kind': 'hypothesis', 'content': 'Fixture focus'}, {})
+        large = store.append('p', {'kind': 'investigation', 'content': 'x' * 4000, 'sources': [focus['id']]}, {})
+        restricted = store.append('p', {'kind': 'observation', 'content': 'Hidden fixture', 'sensitivity': 'high-sensitivity', 'sources': [focus['id']]}, {})
+        pack = store.context_pack('p', focus['id'], max_bytes=2048)
+        self.assertLessEqual(len(json.dumps(pack, sort_keys=True).encode()), 2048)
+        self.assertEqual(1, pack['omitted']['byte_limit'])
+        self.assertNotIn(large['id'], json.dumps(pack))
+        self.assertNotIn(restricted['id'], json.dumps(pack))
+        with self.assertRaises(ValueError):
+            store.context_pack('p', large['id'], max_bytes=2048)
+        with self.assertRaises(ValueError):
+            store.context_pack('p', restricted['id'])
+
+    def test_lesson_candidates_require_outcomes_and_cannot_self_promote(self):
+        store = self.store()
+        outcome = store.append('p', {'kind': 'investigation', 'content': 'Local fixture outcome', 'sensitivity': 'program-private'}, {})
+        candidate = {'kind': 'technique_candidate', 'content': 'Check ownership at each transition', 'sensitivity': 'report-safe',
+                     'sources': [outcome['id']], 'details': {'applicability': 'Multi-step ownership checks', 'supporting_outcomes': [outcome['id']], 'counterexamples': []}}
+        saved = store.append('p', candidate, {})
+        self.assertEqual('agent-unreviewed', saved['trust'])
+        self.assertEqual('program-private', saved['sensitivity'])
+        self.assertEqual({outcome['id']: 1}, saved['source_revisions'])
+        self.assertNotIn(saved['id'], json.dumps(store.export('p')))
+        for record in ({**candidate, 'trust': 'reviewed'}, {**candidate, 'details': {**candidate['details'], 'approved': True}},
+                       {**candidate, 'sources': []}, {**candidate, 'details': {}}):
+            with self.subTest(record=record), self.assertRaises(ValueError):
+                store.append('p', record, {})
+        with self.assertRaises(ValueError):
+            store.append('other', candidate, {})
+
+    def test_context_transport_provider_switch_and_stale_session(self):
+        from tools.agent_interface.contracts import InterfaceError
+        service = Service(self.root / 'interface.sqlite', 'uid:test')
+        self.addCleanup(service.db.close)
+        service.register('p', 'c', 'a' * 64)
+        session = service.open_session(dict(program_id='p', campaign_id='c', provider='codex', client_version='test'))['session']
+        def call(op, sid, **params):
+            return service.handle(dict(schema_version='1.0', operation=op, params={'session_id': sid, **params}))
+        outcome = call('research.append', session['session_id'], record={'kind': 'investigation', 'content': 'Fixture result'})
+        candidate = call('research.append', session['session_id'], record={'kind': 'technique_candidate', 'content': 'Fixture lesson', 'sources': [outcome['id']],
+                         'details': {'applicability': 'Local fixture', 'supporting_outcomes': [outcome['id']], 'counterexamples': []}})
+        second = service.open_session(dict(program_id='p', campaign_id='c', provider='opencode', client_version='test', predecessor_session_id=session['session_id']))['session']
+        self.assertEqual(call('research.context', session['session_id'], entity_id=candidate['id']), call('research.context', second['session_id'], entity_id=candidate['id']))
+        with self.assertRaises(InterfaceError):
+            call('research.context', second['session_id'], entity_id=candidate['id'], max_records=True)
+        service.register('p', 'c', 'b' * 64)
+        with self.assertRaises(InterfaceError):
+            call('research.context', second['session_id'], entity_id=candidate['id'])

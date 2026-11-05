@@ -22,13 +22,40 @@ Each JSON operation takes session_id. The service derives principal, program, ca
 - `research.append`: takes record, following tools/schemas/research-record.schema.json. Required kind and content; optional details, confidence, sensitivity, basis, expires_at, sources, artifacts and external_refs.
 - `research.correct`: takes entity_id, expected_revision, content and reason. Stale revisions conflict; old event content remains readable. Sensitivity and source attribution survive corrections.
 - `research.query`: optional query and kind. `research.history`: entity_id required.
+- `research.context`: requires entity_id; optional max_records (1–25, default 12) and max_bytes (2048–65536, default 32768). Returns a deterministic task-specific context pack.
 - `research.summary`, `research.contradictions`, `research.export`: bounded derived summaries, review candidates and report-safe exports respectively.
 
-Kinds cover program, asset, component, technology, role, functionality, observation, hypothesis, investigation, negative_result, coverage, evidence, question, queue_task and decision. `details` holds application-specific facets: responsibilities/trust boundaries for components; role/tenant permissions; workflow transitions/invariants; hypothesis mechanism/preconditions/predictions; investigation methods/results/limitations; negative-result surface/version/method/conditions/retest trigger; evidence capture metadata; question resolution criteria. Queue records are research proposals; scheduling/state transitions belong to Phase 4.
+Kinds cover program, asset, component, technology, role, functionality, observation, hypothesis, investigation, negative_result, coverage, evidence, question, queue_task, decision and technique_candidate. `details` holds application-specific facets: responsibilities/trust boundaries for components; role/tenant permissions; workflow transitions/invariants; hypothesis mechanism/preconditions/predictions; investigation methods/results/limitations; negative-result surface/version/method/conditions/retest trigger; evidence capture metadata; question resolution criteria. Queue records are research proposals; scheduling/state transitions belong to Phase 4.
 
 `basis` distinguishes observation and inference. Agent requests cannot declare human conclusions. `sources` reference existing same-program entities and pin source revisions. Derived records inherit the strongest source sensitivity. `artifacts` contain registered opaque IDs and SHA-256 hashes, checked against program ownership and stored bytes. `external_refs` reference asset-graph, traffic-corpus or coverage IDs without duplicating those stores; these references are provenance pointers, not independently verified evidence.
 
 All string-bearing fields, including reasons and provenance, are scanned. Known legacy secret-bearing records are suppressed on retrieval. Exports recheck content instead of trusting a report-safe label. High-sensitivity research stays out of summaries/history/export. Expired facts remain historical data and appear in expired_review. Session handoffs include bounded research records, source IDs, negative results, decisions and questions alongside persisted tasks. Summaries are derived and do not grant authorization.
+
+## Task-specific context and reusable lessons
+
+`research.context` takes a focus entity rather than replaying session history. It reads one SQLite snapshot and selects the focus plus its transitive source/dependent neighborhood. Selection puts the focus first, then negative results, investigations, hypotheses, questions and remaining kinds, with stable ID ordering within each group. Link counterevidence, prerequisites and methodology through sources; unlinked material is not inferred to be relevant. The pack preserves full selected records, trust and sensitivity, pins their revisions, and reports stale source references, record/byte omissions, unrelated counts and restricted/unsafe counts without exposing excluded content or IDs. A focus exceeding the byte budget is rejected. Rebuilding against unchanged records gives the same pack; changed source revisions are visible. Context packs remain derived views and grant no authority.
+
+Reusable lessons use `research.append` with kind `technique_candidate`. Require sources and exactly three details fields: nonempty applicability, a nonempty supporting_outcomes list of source IDs, and a counterexamples list (which may be empty). Outcome IDs must reference same-program investigation or negative_result records and also appear in sources, pinning their revisions. An empty counterexamples list records absence of supplied counterexamples, not proof that none exist. All claims remain agent-unreviewed, even when supporting records describe success. Secret scanning and sensitivity inheritance apply; candidates are excluded from report-safe export.
+
+Example params for `research.append` (replace placeholders with an existing session and investigation ID):
+
+```json
+{
+  "session_id": "SESSION_ID",
+  "record": {
+    "kind": "technique_candidate",
+    "content": "Recheck ownership at each workflow transition",
+    "sources": ["INVESTIGATION_ID"],
+    "details": {
+      "applicability": "Multi-step workflows with object ownership boundaries",
+      "supporting_outcomes": ["INVESTIGATION_ID"],
+      "counterexamples": []
+    }
+  }
+}
+```
+
+There is no agent operation to approve candidates, share them across programs or write techniques/skills. Promotion requires an independently reviewed, sanitized package and `skill-scientist` evaluation; that promotion path is not implemented by this storage increment. Program-private evidence stays in its program. No schema migration is needed for the additive candidate kind or derived context view.
 
 ## Campaign continuity
 

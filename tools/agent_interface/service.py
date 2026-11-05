@@ -274,12 +274,14 @@ class Service:
             with self.db:
                 self.db.execute("UPDATE sessions SET data=? WHERE id=?", (json.dumps(session), session["session_id"]))
             return self.handoff(session) if op.endswith("handoff") else {"session": session, "handoff": self.handoff(session)}
-        if op in ("research.append", "research.correct", "research.query", "research.history", "research.summary", "research.contradictions", "research.export"):
+        if op in ("research.append", "research.correct", "research.query", "research.history", "research.summary", "research.contradictions", "research.export", "research.context"):
             allowed = (
                 {"session_id", "record"}
                 if op.endswith("append")
                 else {"session_id", "entity_id", "expected_revision", "content", "reason"}
                 if op.endswith("correct")
+                else {"session_id", "entity_id", "max_records", "max_bytes"}
+                if op.endswith("context")
                 else {"session_id", "query", "kind", "entity_id"}
             )
             if not isinstance(params, dict) or set(params) - allowed or "session_id" not in params:
@@ -299,6 +301,8 @@ class Service:
                 "run_id": None,
             }
             try:
+                if op.endswith("context"):
+                    return store.context_pack(session["program_id"], params.get("entity_id"), params.get("max_records", 12), params.get("max_bytes", 32768))
                 if op.endswith("summary"):
                     return store.summary(session["program_id"])
                 if op.endswith("contradictions"):
