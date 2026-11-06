@@ -1,0 +1,81 @@
+{
+  "context_selection": "session+queue+memory-default",
+  "fixture": "offline-interface-v1",
+  "kind": "research-quality-benchmark",
+  "metrics": {
+    "artifact_bytes": {
+      "max": 1966,
+      "mean": 1966,
+      "min": 1966
+    },
+    "audit_events": {
+      "max": 4,
+      "mean": 4,
+      "min": 4
+    },
+    "audit_ok": {
+      "max": 1,
+      "mean": 1,
+      "min": 1
+    },
+    "dispatch_succeeded": {
+      "max": 1,
+      "mean": 1,
+      "min": 1
+    },
+    "elapsed_ms": {
+      "max": 773.6,
+      "mean": 706.95,
+      "min": 640.3
+    },
+    "plan_tasks": {
+      "max": 0,
+      "mean": 0,
+      "min": 0
+    },
+    "queue_completed": {
+      "max": 0,
+      "mean": 0,
+      "min": 0
+    },
+    "supported_findings": {
+      "max": 1,
+      "mean": 1,
+      "min": 1
+    }
+  },
+  "model_client": "none-deterministic",
+  "per_run": [
+    {
+      "artifact_bytes": 1966,
+      "audit_events": 4,
+      "audit_ok": 1,
+      "budget_configured": 0,
+      "dispatch_succeeded": 1,
+      "elapsed_ms": 773.6,
+      "plan_tasks": 0,
+      "queue_completed": 0,
+      "repeated_work": 0,
+      "research_records": 3,
+      "seed": 0,
+      "supported_findings": 1
+    },
+    {
+      "artifact_bytes": 1966,
+      "audit_events": 4,
+      "audit_ok": 1,
+      "budget_configured": 0,
+      "dispatch_succeeded": 1,
+      "elapsed_ms": 640.3,
+      "plan_tasks": 0,
+      "queue_completed": 0,
+      "repeated_work": 0,
+      "research_records": 3,
+      "seed": 1,
+      "supported_findings": 1
+    }
+  ],
+  "runs": 2,
+  "schema_version": "1.0",
+  "workflow_version": "agent-interface-1.0"
+}

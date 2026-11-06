@@ -35,6 +35,9 @@ jobs:
       - name: make validate
         run: make validate
 
+      - name: Research quality benchmark
+        run: python3 tools/research_benchmark.py --runs 2 --baseline tests/benchmarks/research-quality-baseline.json
+
       - name: Release gate audit
         run: python3 tools/validate_skills.py audit-release
 

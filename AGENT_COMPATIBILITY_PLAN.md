@@ -1,6 +1,6 @@
 # Agent compatibility implementation plan
 
-Status: Phases 1-6 implemented as local/offline increments. Phase 6 adds the scope parser, operator approval grants, aggregate budgets, hash-chained audit and the exact-report-hash submission gate; `dispatch.authorize` is a tested per-request decision boundary but no constrained worker executes yet, so production active dispatch still requires deployed isolation. Phase 7 (offline matrix, benchmarks, CI) and Phase 8 (docs) remain planned. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md), [Phase 6 enforcement](docs/phase6-enforcement.md) and read ARCHITECTURE_AUDIT.md first.
+Status: Phases 1-6 implemented as local/offline increments. Phase 6 adds the scope parser, operator approval grants, aggregate budgets, hash-chained audit and the exact-report-hash submission gate; `dispatch.authorize` is a tested per-request decision boundary but no constrained worker executes yet, so production active dispatch still requires deployed isolation. Phase 7 offline benchmark/CI increment is implemented; Phase 8 (docs) remains planned. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md), [Phase 6 enforcement](docs/phase6-enforcement.md) and read ARCHITECTURE_AUDIT.md first.
 
 ## Design decision
 

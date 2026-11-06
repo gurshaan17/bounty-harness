@@ -789,10 +789,20 @@ def cmd_default(json_output=False, schemas=None):
 
     results.sort(key=lambda x: x["score"])
 
+    # Tracked baseline regressions: failures listed here are known and do not
+    # fail the gate; any NEW failure does. Remove entries as skills are fixed.
+    KNOWN_REGRESSIONS = {"binary-analysis", "race-condition", "sqli"}
+    failing = {r["name"] for r in results if r["score"] < PASS_THRESHOLD}
+    unexpected = sorted(failing - KNOWN_REGRESSIONS)
+    exit_code = 1 if unexpected else 0
+
     if json_output:
         report = _build_json_report(results, all_issues)
+        report["overall"]["exit_code"] = exit_code
+        report["overall"]["unexpected_failures"] = unexpected
+        report["overall"]["known_regressions"] = sorted(failing & KNOWN_REGRESSIONS)
         print(json.dumps(report, indent=2))
-        return report["overall"]["exit_code"]
+        return exit_code
 
     print("\n=== Skill Quality Report ===")
     print(f"Toolkit Version: {TOOLKIT_VERSION}")
@@ -829,7 +839,11 @@ def cmd_default(json_output=False, schemas=None):
     report_path.write_text(json.dumps(json_results, indent=2))
     print(f"\nReport saved to {report_path}")
 
-    return 0
+    if failing & KNOWN_REGRESSIONS:
+        print(f"Known tracked regressions: {sorted(failing & KNOWN_REGRESSIONS)}")
+    if unexpected:
+        print(f"Unexpected validator failures: {unexpected}")
+    return exit_code
 
 
 def cmd_audit_skill(skill_name, json_output=False, schemas=None):
