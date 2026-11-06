@@ -460,7 +460,8 @@ class Phase5Tests(unittest.TestCase):
         self.assertFalse(checked["submission_approved"])
         self.assertFalse(checked["evidence_verified"])
         self.assertIn("review.record", capabilities()["operations"])
-        self.assertIn("report.submit", capabilities()["unavailable_operations"])
+        # Phase 6: report.submit exists but requires a separate human grant bound to the exact report hash.
+        self.assertIn("report.submit", capabilities()["operations"])
 
     def test_research_source_corrections_invalidate_independent_snapshot(self):
         source = self.call("research.append", record={"kind": "observation", "content": "Fixture role policy permits only owner access"})

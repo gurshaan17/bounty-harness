@@ -1,6 +1,6 @@
 # Agent compatibility implementation plan
 
-Status: Phase 1 documentation and Phase 3/4 local research persistence/planning and Phase 5 offline evidence/review are implemented. Phase 2 offline contracts are implemented with native acceptance limitations; Phase 6 onward remains planned. Production active dispatch still requires the Phase 6 external enforcement prerequisite. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md) and read ARCHITECTURE_AUDIT.md first.
+Status: Phases 1-6 implemented as local/offline increments. Phase 6 adds the scope parser, operator approval grants, aggregate budgets, hash-chained audit and the exact-report-hash submission gate; `dispatch.authorize` is a tested per-request decision boundary but no constrained worker executes yet, so production active dispatch still requires deployed isolation. Phase 7 (offline matrix, benchmarks, CI) and Phase 8 (docs) remain planned. See [the phase ledger](docs/AGENT_AGNOSTIC_PHASE_LEDGER.md), [Phase 6 enforcement](docs/phase6-enforcement.md) and read ARCHITECTURE_AUDIT.md first.
 
 ## Design decision
 

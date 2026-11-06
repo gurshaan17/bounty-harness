@@ -61,6 +61,30 @@ def main():
     human.add_argument("--assessment", required=True, type=Path)
     human.add_argument("--decision", required=True, choices=["confirm", "reject", "needs_evidence"])
     human.add_argument("--reason", required=True)
+    approval = sub.add_parser("approval-grant", help="Operator: issue an execution grant bound to an approval request")
+    approval.add_argument("--request-id", required=True)
+    approval.add_argument("--ttl", type=int, default=3600)
+    approval.add_argument("--max-requests", type=int, default=None)
+    approval_revoke = sub.add_parser("approval-revoke", help="Operator: revoke an execution grant")
+    approval_revoke.add_argument("--grant-id", required=True)
+    approval_revoke.add_argument("--reason", required=True)
+    budget = sub.add_parser("budget-set", help="Operator: set aggregate request/concurrency/rate budgets for a campaign")
+    budget.add_argument("--program-id", required=True)
+    budget.add_argument("--campaign-id", required=True)
+    budget.add_argument("--max-requests", required=True, type=int)
+    budget.add_argument("--max-concurrent", type=int, default=None)
+    budget.add_argument("--min-interval-ms", type=int, default=0)
+    subgrant = sub.add_parser("submission-grant", help="Operator: grant submission of one exact report hash for a finding")
+    subgrant.add_argument("--finding-id", required=True)
+    subgrant.add_argument("--report-file", required=True, type=Path)
+    subgrant.add_argument("--ttl", type=int, default=3600)
+    subrevoke = sub.add_parser("submission-revoke", help="Operator: revoke a submission grant")
+    subrevoke.add_argument("--grant-id", required=True)
+    subrevoke.add_argument("--reason", required=True)
+    audit = sub.add_parser("audit-list", help="Operator: list redacted audit events")
+    audit.add_argument("--program-id", default=None)
+    audit.add_argument("--limit", type=int, default=50)
+    sub.add_parser("audit-verify", help="Operator: verify the audit hash chain")
     args = parser.parse_args()
     if args.data_root:
         if not args.data_root.is_absolute() or args.data_root.resolve().is_relative_to(ROOT):
@@ -133,7 +157,29 @@ def main():
             scope = args.scope_file.read_bytes()
             if not scope.strip() or len(scope) > MAX_MESSAGE:
                 raise InterfaceError("invalid_input", "Scope snapshot must be nonempty and at most 64 KiB")
-            result = service.register(args.program_id, args.campaign_id, hashlib.sha256(scope).hexdigest())
+            try:
+                scope_text = scope.decode("utf-8")
+            except UnicodeDecodeError:
+                raise InterfaceError("invalid_input", "Scope snapshot must be UTF-8") from None
+            result = service.register(args.program_id, args.campaign_id, hashlib.sha256(scope).hexdigest(), scope_text=scope_text)
+        elif args.command == "approval-grant":
+            result = service.control().grant_approval(args.request_id, args.ttl, args.max_requests)
+        elif args.command == "approval-revoke":
+            result = service.control().revoke_approval(args.grant_id, args.reason)
+        elif args.command == "budget-set":
+            result = service.control().set_budget(args.program_id, args.campaign_id, args.max_requests, args.max_concurrent, args.min_interval_ms)
+        elif args.command == "submission-grant":
+            if not args.report_file.is_file():
+                raise InterfaceError("invalid_input", "Report file is required")
+            with args.report_file.open("rb") as stream:
+                report_raw = stream.read(MAX_MESSAGE + 1)
+            result = service.operator_submission_grant(args.finding_id, report_raw, args.ttl)
+        elif args.command == "submission-revoke":
+            result = service.control().revoke_submission(args.grant_id, args.reason)
+        elif args.command == "audit-list":
+            result = service.control().audit_list(program=args.program_id, limit=args.limit)
+        elif args.command == "audit-verify":
+            result = service.control().audit_verify()
         else:
             result = service.handle(request)
         print(json.dumps(result, sort_keys=True))

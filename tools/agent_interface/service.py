@@ -1,16 +1,19 @@
 """Durable local sessions and tasks. Local identity is established outside JSON."""
 
 import hashlib
+import importlib.util
 import json
 import sqlite3
 import time
 import uuid
 from datetime import UTC, datetime
 
+from tools.execution_control import scope as scope_rules
+from tools.execution_control.enforcement import Control, report_digest
 from tools.execution_control.offline import execute
 
 from .catalog import PROVIDERS, ROOT, capabilities, catalog
-from .contracts import InterfaceError, digest, validate, validate_named
+from .contracts import InterfaceError, decode, digest, validate, validate_named
 
 POLICY_DIGEST = digest({"version": 1, "mode": "offline", "handler": "standards-search-v1"})
 ID = {"type": "string", "pattern": "[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", "maxLength": 128}
@@ -44,21 +47,47 @@ class Service:
                 payload_hash TEXT, result TEXT, UNIQUE(principal,program,campaign,key));
             CREATE TABLE IF NOT EXISTS task_leases (task TEXT PRIMARY KEY, expires REAL);
             CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, task TEXT, data BLOB);
+            CREATE TABLE IF NOT EXISTS scopes (program TEXT, campaign TEXT, principal TEXT, scope_digest TEXT, rules TEXT, PRIMARY KEY(program,campaign,principal));
+            CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, kind TEXT, status TEXT, data TEXT);
+            CREATE TABLE IF NOT EXISTS budgets (
+                program TEXT, campaign TEXT, max_requests INTEGER, requests_used INTEGER,
+                max_concurrent INTEGER, min_interval_ms INTEGER, last_dispatch_at REAL,
+                updated_at TEXT, PRIMARY KEY(program,campaign));
+            CREATE TABLE IF NOT EXISTS audit_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, data TEXT);
+            CREATE TABLE IF NOT EXISTS submissions (id TEXT PRIMARY KEY, finding TEXT, data TEXT);
+            CREATE TRIGGER IF NOT EXISTS protect_audit_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, 'immutable audit history'); END;
+            CREATE TRIGGER IF NOT EXISTS protect_audit_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, 'immutable audit history'); END;
         """)
+
+    def control(self):
+        return Control(self.db, self.principal)
 
     def recover_expired(self):
         with self.db:
-            rows = self.db.execute("SELECT tasks.id,tasks.result FROM tasks JOIN task_leases ON tasks.id=task_leases.task WHERE task_leases.expires<?", (time.time(),)).fetchall()
+            rows = self.db.execute(
+                "SELECT tasks.id,tasks.result,tasks.principal,tasks.program,tasks.campaign"
+                " FROM tasks JOIN task_leases ON tasks.id=task_leases.task WHERE task_leases.expires<?",
+                (time.time(),),
+            ).fetchall()
             for row in rows:
                 result = json.loads(row["result"])
                 if result["status"] == "running":
                     result.update(status="interrupted", ended_at=now(), error={"code": "interrupted", "message": "Worker lease expired; reconcile artifacts before proposing a new task"})
                     self.save_result(result)
+                    Control(self.db, row["principal"]).audit(
+                        "interrupted", row["program"], row["campaign"], {"task_id": row["id"], "reason": "worker lease expired"}, task_id=row["id"], principal=row["principal"]
+                    )
                 self.db.execute("DELETE FROM task_leases WHERE task=?", (row["id"],))
 
-    def register(self, program, campaign, scope_digest):
+    def register(self, program, campaign, scope_digest, scope_text=None):
         """Operator CLI only. Explicit scope snapshot import, never a JSON operation."""
         fields({"program": program, "campaign": campaign}, ["program", "campaign"])
+        rules = None
+        if scope_text is not None:
+            try:
+                rules = {"schema_version": "1.0", **scope_rules.parse(scope_text)}
+            except ValueError as exc:
+                raise InterfaceError("invalid_input", f"Scope snapshot rejected: {exc}") from None
         with self.db:
             row = self.db.execute("SELECT * FROM contexts WHERE program=? AND campaign=?", (program, campaign)).fetchone()
             if row and row["principal"] != self.principal:
@@ -67,6 +96,12 @@ class Service:
             if row and (row["scope"] != scope_digest or row["policy"] != POLICY_DIGEST):
                 revision += 1
             self.db.execute("INSERT OR REPLACE INTO contexts VALUES(?,?,?,?,?,?)", (program, campaign, self.principal, revision, scope_digest, POLICY_DIGEST))
+            if rules is not None:
+                self.db.execute(
+                    "INSERT OR REPLACE INTO scopes VALUES(?,?,?,?,?)",
+                    (program, campaign, self.principal, scope_digest, json.dumps(rules, sort_keys=True)),
+                )
+                self.control().audit("configured", program, campaign, {"scope_registered": True, "scope_digest": scope_digest})
         return self.context(program, campaign)
 
     def context(self, program, campaign):
@@ -418,6 +453,8 @@ class Service:
         except BaseException:
             self.db.rollback()
             raise
+        with self.db:
+            self.control().audit("proposed", task["program_id"], task["campaign_id"], {"task_id": task["task_id"], "skill": task["skill"], "workflow": task["workflow"]}, task_id=task["task_id"])
         try:
             context = self.context(task["program_id"], task["campaign_id"])
             if task["expected_context_revision"] != context["context_revision"] or any(task[k] != context[k] for k in ("scope_digest", "policy_digest")):
@@ -432,6 +469,7 @@ class Service:
             if entry["execution_modes"] != ["offline"]:
                 raise InterfaceError("unsupported_capability", "Constrained active execution is unavailable")
             validate(task["inputs"], entry["inputs"])
+            self.control().enforce_concurrency({"program_id": task["program_id"], "campaign_id": task["campaign_id"]})
             result.update(status="running", started_at=now())
             with self.db:
                 self.db.execute("BEGIN IMMEDIATE")
@@ -441,8 +479,10 @@ class Service:
                 latest = self.context(task["program_id"], task["campaign_id"])
                 if latest != context:
                     raise InterfaceError("context_conflict", "Context changed before launch")
+                self.control().enforce_concurrency({"program_id": task["program_id"], "campaign_id": task["campaign_id"]})
                 self.save_result(result)
                 self.db.execute("INSERT OR REPLACE INTO task_leases VALUES(?,?)", (task["task_id"], time.time() + 30))
+                self.control().audit("started", task["program_id"], task["campaign_id"], {"task_id": task["task_id"], "run_id": result["run_id"]}, task_id=task["task_id"])
             data = json.dumps(execute(self.root, entry, task["inputs"]), sort_keys=True).encode()
             if len(data) > 1048576:
                 raise InterfaceError("budget_exhaustion", "Offline artifact exceeds 1 MiB limit")
@@ -458,6 +498,7 @@ class Service:
                 result["budgets"]["artifact_bytes"] = len(data)
                 result["ended_at"] = now()
                 self.save_result(result)
+                self.control().audit("completed", task["program_id"], task["campaign_id"], {"task_id": task["task_id"], "run_id": result["run_id"]}, task_id=task["task_id"])
             return result
         except InterfaceError as exc:
             result.update(status="denied" if result["started_at"] is None else "failed", error={"code": exc.code, "message": exc.message})
@@ -467,9 +508,104 @@ class Service:
             # Do not serialize exception text, input data, credentials, or filesystem paths.
             result.update(status="failed", error={"code": "internal_failure", "message": "Offline execution failed"})
         result["ended_at"] = now()
+        terminal = "interrupted" if result["status"] == "interrupted" else ("completed" if result["status"] == "succeeded" else result["status"])
         with self.db:
             self.save_result(result)
+            self.control().audit(
+                terminal, task["program_id"], task["campaign_id"],
+                {"task_id": task["task_id"], "run_id": result["run_id"], "error": (result.get("error") or {}).get("code")},
+                task_id=task["task_id"],
+            )
         return result
+
+    def enforcement_op(self, op, params):
+        if not isinstance(params, dict):
+            raise InterfaceError("invalid_input", "Enforcement parameters must be an object")
+        if op == "approval.request":
+            required = {"session_id", "skill", "workflow", "inputs", "max_requests", "ttl_seconds"}
+            if set(params) != required:
+                raise InterfaceError("invalid_input", "Unknown or missing approval fields")
+            session = self.session(params["session_id"])
+            context = self.context(session["program_id"], session["campaign_id"])
+            if session["context_revision"] != context["context_revision"]:
+                raise InterfaceError("context_conflict", "Session context is stale")
+            entry = next((e for e in catalog(self.root)["workflows"] if e["skill"] == params["skill"] and e["workflow"] == params["workflow"]), None)
+            if entry is None:
+                raise InterfaceError("invalid_input", "Unknown workflow")
+            validate(params["inputs"], entry["inputs"])
+            if type(params["max_requests"]) is not int or not 1 <= params["max_requests"] <= 100000:
+                raise InterfaceError("invalid_input", "max_requests must be 1-100000")
+            if type(params["ttl_seconds"]) is not int or not 1 <= params["ttl_seconds"] <= 86400:
+                raise InterfaceError("invalid_input", "ttl_seconds must be 1-86400")
+            return self.control().request_approval(context, session, entry, params["inputs"], params["max_requests"], params["ttl_seconds"])
+        if op in ("approval.list", "budget.status"):
+            fields(params, ["session_id"])
+            session = self.session(params["session_id"])
+            context = self.context(session["program_id"], session["campaign_id"])
+            if op == "approval.list":
+                return self.control().list_approvals(context["program_id"], context["campaign_id"])
+            return self.control().budget_status(context["program_id"], context["campaign_id"])
+        if op == "dispatch.authorize":
+            if set(params) != {"session_id", "grant_id", "url", "method"}:
+                raise InterfaceError("invalid_input", "Unknown or missing dispatch fields")
+            for key in ("session_id", "grant_id"):
+                validate(params[key], ID)
+            if not isinstance(params["url"], str) or len(params["url"]) > 2048 or not isinstance(params["method"], str) or len(params["method"]) > 16:
+                raise InterfaceError("invalid_input", "Invalid dispatch url or method")
+            session = self.session(params["session_id"])
+            context = self.context(session["program_id"], session["campaign_id"])
+            if session["context_revision"] != context["context_revision"]:
+                raise InterfaceError("context_conflict", "Session context is stale")
+            return self.control().authorize(context, session, params["grant_id"], params["url"], params["method"])
+        if op == "report.submit":
+            if set(params) != {"session_id", "finding_id", "report"}:
+                raise InterfaceError("invalid_input", "Unknown or missing report fields")
+            validate(params["session_id"], ID)
+            validate(params["finding_id"], ID)
+            if not isinstance(params["report"], dict) or len(json.dumps(params["report"], sort_keys=True).encode()) > 49152:
+                raise InterfaceError("invalid_input", "Report must be an object of at most 48 KiB")
+            session = self.session(params["session_id"])
+            context = self.context(session["program_id"], session["campaign_id"])
+            if session["context_revision"] != context["context_revision"]:
+                raise InterfaceError("context_conflict", "Session context is stale")
+            module, store = self.memory()
+            try:
+                path = self.root / ".claude/skills/impact-verifier/scripts/review_store.py"
+                spec = importlib.util.spec_from_file_location("bh_reviews_submit", path)
+                review_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(review_module)
+                try:
+                    candidate = review_module.Reviews(store, self.principal).owned(params["finding_id"], context, session)
+                except (ValueError, KeyError, TypeError):
+                    raise InterfaceError("scope_denial", "Unknown or inaccessible finding") from None
+                store.validate_payload(params["report"])
+                return self.control().submit_report(context, session, candidate, params["report"])
+            except module.RevisionConflict:
+                raise InterfaceError("context_conflict", "Finding revision changed") from None
+            except (ValueError, TypeError, KeyError, AttributeError):
+                raise InterfaceError("invalid_input", "Invalid report content or finding state") from None
+            finally:
+                store.db.close()
+        raise InterfaceError("unsupported_capability", "Operation is unavailable")
+
+    def operator_submission_grant(self, finding_id, report_raw, ttl_seconds):
+        """Operator CLI only: bind a human submission grant to the exact report hash."""
+        module, store = self.memory()
+        try:
+            row = store.db.execute("SELECT data FROM findings WHERE id=?", (finding_id,)).fetchone()
+            if not row:
+                raise InterfaceError("scope_denial", "Unknown finding")
+            finding = json.loads(row["data"] if isinstance(row, sqlite3.Row) else row[0])
+            store.validate_payload(finding)
+            report = decode(report_raw)
+            if not isinstance(report, dict):
+                raise InterfaceError("invalid_input", "Report document must be a JSON object")
+            store.validate_payload(report)
+            return self.control().grant_submission(finding, report_digest(report), ttl_seconds)
+        except ValueError:
+            raise InterfaceError("invalid_input", "Invalid finding or report content") from None
+        finally:
+            store.db.close()
 
     def handle(self, request):
         validate_named(request, "request")
@@ -478,6 +614,8 @@ class Service:
         if op in ("capabilities", "discover"):
             fields(params, [])
             return capabilities() if op == "capabilities" else catalog(self.root)
+        if op in ("approval.request", "approval.list", "dispatch.authorize", "budget.status", "report.submit"):
+            return self.enforcement_op(op, params)
         if op in ("finding.create", "finding.get", "finding.list", "evidence.manifest", "evidence.read", "finding.history", "review.open", "review.snapshot", "review.artifact", "review.record"):
             return self.verification(params, op)
         if op in (
@@ -582,5 +720,7 @@ class Service:
                 if op == "task.cancel" and result["status"] in ("queued", "running", "awaiting_approval"):
                     result.update(status="cancelled", ended_at=now())
                     self.save_result(result)
+                    owner = self.db.execute("SELECT program,campaign,principal FROM tasks WHERE id=?", (params["task_id"],)).fetchone()
+                    self.control().audit("cancelled", owner["program"], owner["campaign"], {"task_id": params["task_id"]}, task_id=params["task_id"], principal=owner["principal"])
             return result
         raise InterfaceError("unsupported_capability", "Operation is unavailable")
